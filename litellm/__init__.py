@@ -1280,6 +1280,9 @@ from .llms.voyage.embedding.transformation_contextual import (
 from .llms.infinity.embedding.transformation import InfinityEmbeddingConfig
 from .llms.azure_ai.chat.transformation import AzureAIStudioConfig
 from .llms.mistral.chat.transformation import MistralConfig
+from .llms.mistral.audio_transcription.transformation import (
+    MistralAudioTranscriptionConfig,
+)
 from .llms.openai.responses.transformation import OpenAIResponsesAPIConfig
 from .llms.azure.responses.transformation import AzureOpenAIResponsesAPIConfig
 from .llms.azure.responses.o_series_transformation import (
