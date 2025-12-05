@@ -3617,3 +3617,496 @@ async def test_update_team_org_scoped_tpm_rpm_bypasses_user_limit():
 
         # Verify team was updated
         assert result["team_id"] == "org-team-update-bypass-123"
+
+
+# =====================================================================
+# Bug Fix Tests: Organization Membership Validation
+# These tests verify the CORRECT behavior - that validate_team_org_change
+# should check organization.members (from LiteLLM_OrganizationMembership table)
+# instead of organization.users (deprecated direct FK relation).
+#
+# These tests will FAIL with the current buggy code and PASS after the fix.
+# =====================================================================
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_should_pass_when_users_are_org_members():
+    """
+    Test that validate_team_org_change should pass when team members are
+    organization members via the LiteLLM_OrganizationMembership table.
+
+    Scenario:
+    - Users are members of an organization via LiteLLM_OrganizationMembership table
+    - Team has these users as members
+    - Validation should PASS because all team members are org members
+
+    Current bug:
+    - The validation uses organization.users which is based on LiteLLM_UserTable.organization_id
+    - But organization membership is tracked via LiteLLM_OrganizationMembership table
+    - Users added via /organization/member_add are in the membership table, not users
+
+    This test will FAIL until the bug is fixed.
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+        Member,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    user_id_1 = "user-in-membership-table-1"
+    user_id_2 = "user-in-membership-table-2"
+    org_id = "target-org-123"
+    team_org_id = "source-org-456"  # Different org - triggers validation
+
+    # Create team with members
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id  # Different from target org
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = [
+        Member(user_id=user_id_1, role="admin"),
+        Member(user_id=user_id_2, role="user"),
+    ]
+
+    # Create organization membership records (the correct way membership is tracked)
+    mock_membership_1 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_1.user_id = user_id_1
+    mock_membership_1.organization_id = org_id
+
+    mock_membership_2 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_2.user_id = user_id_2
+    mock_membership_2.organization_id = org_id
+
+    # Create organization with members in the membership table
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4", "gpt-3.5-turbo"]
+    organization.litellm_budget_table = None
+    organization.users = []  # Empty - this is the deprecated field
+    organization.members = [mock_membership_1, mock_membership_2]  # Correct membership
+
+    mock_router = MagicMock(spec=Router)
+
+    # Patch can_org_access_model to bypass model validation and focus on membership check
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should return True because all team members are org members
+        # CURRENT BUG: Raises HTTPException 403 because it checks organization.users
+        result = validate_team_org_change(
+            team=team,
+            organization=organization,
+            llm_router=mock_router,
+        )
+
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_should_use_members_not_users():
+    """
+    Test that validate_team_org_change should check organization.members
+    (from LiteLLM_OrganizationMembership table) instead of organization.users.
+
+    This test explicitly verifies that when organization.members contains the
+    team members but organization.users is empty, validation should still pass.
+
+    The fix should:
+    1. Query organization with include={"members": True}
+    2. Check organization.members instead of organization.users
+
+    This test will FAIL until the bug is fixed.
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+        Member,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    user_id_1 = "user-member-1"
+    user_id_2 = "user-member-2"
+    org_id = "target-org-with-members"
+    team_org_id = "source-org-different"
+
+    # Create team with members
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = [
+        Member(user_id=user_id_1, role="admin"),
+        Member(user_id=user_id_2, role="user"),
+    ]
+
+    # Create organization membership records
+    mock_membership_1 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_1.user_id = user_id_1
+    mock_membership_1.organization_id = org_id
+
+    mock_membership_2 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_2.user_id = user_id_2
+    mock_membership_2.organization_id = org_id
+
+    # Create organization with:
+    # - users = [] (empty, deprecated field)
+    # - members = [membership records] (correct membership)
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4", "gpt-3.5-turbo"]
+    organization.litellm_budget_table = None
+    organization.users = []  # Empty - deprecated
+    organization.members = [mock_membership_1, mock_membership_2]  # Populated
+
+    mock_router = MagicMock(spec=Router)
+
+    # Patch can_org_access_model to bypass model validation
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should return True - members field has the users
+        # CURRENT BUG: Raises HTTPException 403 because it checks users field
+        result = validate_team_org_change(
+            team=team,
+            organization=organization,
+            llm_router=mock_router,
+        )
+
+        assert result is True
+
+
+# =====================================================================
+# Edge Case Tests: 0, 1, 2 members - to catch list vs single object bugs
+# =====================================================================
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_zero_members_in_team():
+    """
+    Edge case: Team has 0 members.
+
+    When a team has no members, validation should pass (no members to check).
+    This tests handling of empty list / None for members_with_roles.
+
+    This test will FAIL until the bug is fixed.
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    org_id = "target-org-zero-members"
+    team_org_id = "source-org"
+
+    # Create team with NO members
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = []  # Empty - no members
+
+    # Create organization (members list doesn't matter since team has none)
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4"]
+    organization.litellm_budget_table = None
+    organization.users = []
+    organization.members = []
+
+    mock_router = MagicMock(spec=Router)
+
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should return True - no members to validate
+        result = validate_team_org_change(
+            team=team,
+            organization=organization,
+            llm_router=mock_router,
+        )
+
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_one_member_in_team_and_org():
+    """
+    Edge case: Team has exactly 1 member, org has exactly 1 member (same user).
+
+    This tests handling of single-element lists to catch bugs where
+    code might treat a single item differently from a list.
+
+    This test will FAIL until the bug is fixed.
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+        Member,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    user_id = "single-user-123"
+    org_id = "target-org-one-member"
+    team_org_id = "source-org"
+
+    # Create team with exactly 1 member
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = [
+        Member(user_id=user_id, role="admin"),
+    ]
+
+    # Create organization membership for the single user
+    mock_membership = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership.user_id = user_id
+    mock_membership.organization_id = org_id
+
+    # Create organization with exactly 1 member
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4"]
+    organization.litellm_budget_table = None
+    organization.users = []
+    organization.members = [mock_membership]  # Single member
+
+    mock_router = MagicMock(spec=Router)
+
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should return True - single member is in org
+        # CURRENT BUG: Raises HTTPException 403
+        result = validate_team_org_change(
+            team=team,
+            organization=organization,
+            llm_router=mock_router,
+        )
+
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_one_member_in_team_two_in_org():
+    """
+    Edge case: Team has 1 member, org has 2 members (including the team member).
+
+    Tests that a single team member is correctly found in a larger org member list.
+
+    This test will FAIL until the bug is fixed.
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+        Member,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    user_id_team = "team-member-only"
+    user_id_other = "other-org-member"
+    org_id = "target-org"
+    team_org_id = "source-org"
+
+    # Create team with 1 member
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = [
+        Member(user_id=user_id_team, role="user"),
+    ]
+
+    # Create organization memberships
+    mock_membership_1 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_1.user_id = user_id_team
+    mock_membership_1.organization_id = org_id
+
+    mock_membership_2 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_2.user_id = user_id_other
+    mock_membership_2.organization_id = org_id
+
+    # Create organization with 2 members
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4"]
+    organization.litellm_budget_table = None
+    organization.users = []
+    organization.members = [mock_membership_1, mock_membership_2]
+
+    mock_router = MagicMock(spec=Router)
+
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should return True - team member is in org
+        # CURRENT BUG: Raises HTTPException 403
+        result = validate_team_org_change(
+            team=team,
+            organization=organization,
+            llm_router=mock_router,
+        )
+
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_two_members_in_team_one_in_org():
+    """
+    Edge case: Team has 2 members, org has only 1 member.
+
+    This should FAIL validation because not all team members are in the org.
+    This tests that the validation correctly rejects when members are missing.
+
+    This test verifies correct REJECTION behavior (should fail even after fix).
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+        Member,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    user_id_in_org = "user-in-org"
+    user_id_not_in_org = "user-not-in-org"
+    org_id = "target-org"
+    team_org_id = "source-org"
+
+    # Create team with 2 members
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = [
+        Member(user_id=user_id_in_org, role="admin"),
+        Member(user_id=user_id_not_in_org, role="user"),
+    ]
+
+    # Create organization membership for only 1 user
+    mock_membership = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership.user_id = user_id_in_org
+    mock_membership.organization_id = org_id
+
+    # Create organization with only 1 member
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4"]
+    organization.litellm_budget_table = None
+    organization.users = []
+    organization.members = [mock_membership]  # Only 1 of the 2 team members
+
+    mock_router = MagicMock(spec=Router)
+
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should raise HTTPException 403 - user_id_not_in_org is not in org
+        # This is CORRECT behavior - validation should reject
+        with pytest.raises(HTTPException) as exc_info:
+            validate_team_org_change(
+                team=team,
+                organization=organization,
+                llm_router=mock_router,
+            )
+
+        assert exc_info.value.status_code == 403
+        assert "not a member of the organization" in str(exc_info.value.detail)
+        assert user_id_not_in_org in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_validate_team_org_change_should_pass_with_all_members_in_org():
+    """
+    Test that validate_team_org_change should pass when all team members
+    are organization members (tracked via LiteLLM_OrganizationMembership).
+
+    Scenario:
+    - Team has 3 members: user1, user2, user3
+    - Organization has all 3 users in organization.members
+    - Validation should PASS
+
+    This test will FAIL until the bug is fixed.
+    """
+    from litellm.proxy._types import (
+        LiteLLM_OrganizationMembershipTable,
+        LiteLLM_OrganizationTable,
+        LiteLLM_TeamTable,
+        Member,
+    )
+    from litellm.proxy.management_endpoints.team_endpoints import validate_team_org_change
+
+    user_id_1 = "user-member-1"
+    user_id_2 = "user-member-2"
+    user_id_3 = "user-member-3"
+    org_id = "org-with-all-members"
+    team_org_id = "different-org"
+
+    # Create team with all 3 members
+    team = MagicMock(spec=LiteLLM_TeamTable)
+    team.organization_id = team_org_id
+    team.models = ["gpt-4"]
+    team.max_budget = None
+    team.tpm_limit = None
+    team.rpm_limit = None
+    team.members_with_roles = [
+        Member(user_id=user_id_1, role="admin"),
+        Member(user_id=user_id_2, role="user"),
+        Member(user_id=user_id_3, role="user"),
+    ]
+
+    # Create organization membership records for all users
+    mock_membership_1 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_1.user_id = user_id_1
+    mock_membership_1.organization_id = org_id
+
+    mock_membership_2 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_2.user_id = user_id_2
+    mock_membership_2.organization_id = org_id
+
+    mock_membership_3 = MagicMock(spec=LiteLLM_OrganizationMembershipTable)
+    mock_membership_3.user_id = user_id_3
+    mock_membership_3.organization_id = org_id
+
+    # Create organization with members in the membership table
+    organization = MagicMock(spec=LiteLLM_OrganizationTable)
+    organization.organization_id = org_id
+    organization.models = ["gpt-4"]
+    organization.litellm_budget_table = None
+    organization.users = []  # Empty - deprecated field
+    organization.members = [mock_membership_1, mock_membership_2, mock_membership_3]
+
+    mock_router = MagicMock(spec=Router)
+
+    # Patch can_org_access_model to bypass model validation
+    with patch(
+        "litellm.proxy.management_endpoints.team_endpoints.can_org_access_model"
+    ):
+        # EXPECTED: Should return True - all team members are org members
+        # CURRENT BUG: Raises HTTPException 403 because it checks organization.users
+        result = validate_team_org_change(
+            team=team,
+            organization=organization,
+            llm_router=mock_router,
+        )
+
+        assert result is True
