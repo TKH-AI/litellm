@@ -389,7 +389,10 @@ litellm_settings:
       - team_id: "team_id_1" # Required[str]: team_id to be used by the user
         max_budget_in_team: 100 # Optional[float], optional): $100 budget for the team. Defaults to None.
         user_role: "user" # Optional[str], optional): "user" or "admin". Defaults to "user"
-  
+
+  # Microsoft Entra ID Organization Creation (see msft_sso.md for details)
+  entra_groups_also_create_orgs: false  # Optional[bool]: Also create Organizations from Entra groups (default: false)
+
   default_team_params:             # Default Params to apply when litellm auto creates a team from SSO IDP provider
     max_budget: 100                # Optional[float], optional): $100 budget for the team
     budget_duration: 30d           # Optional[str], optional): 30 days budget_duration for the team
@@ -407,7 +410,7 @@ litellm_settings:
   key_generation_settings: # Restricts who can generate keys. [Further docs](./virtual_keys.md#restricting-key-generation)
     team_key_generation:
       allowed_team_member_roles: ["admin"]
-    personal_key_generation: # maps to 'Default Team' on UI 
+    personal_key_generation: # maps to 'Default Team' on UI
       allowed_user_roles: ["proxy_admin"]
 ```
 
