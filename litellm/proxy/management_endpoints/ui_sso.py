@@ -2479,27 +2479,57 @@ class MicrosoftSSOHandler:
         service_principal_teams: List[MicrosoftServicePrincipalTeam],
     ):
         """
-        Creates Litellm Teams from the Service Principal Group IDs
+        Creates LiteLLM Teams (and optionally Organizations) from Service Principal Group IDs.
 
-        When a user sets a `SERVICE_PRINCIPAL_ID` in the env, litellm will fetch groups under that service principal and create Litellm Teams from them
+        When entra_groups_also_create_orgs is True:
+        - Creates an Organization for each Entra group
+        - Creates an org-scoped Team for each Entra group
+
+        When entra_groups_also_create_orgs is False (default):
+        - Creates standalone Teams only (current behavior)
+
+        When a user sets a `SERVICE_PRINCIPAL_ID` in the env, litellm will fetch groups
+        under that service principal and create LiteLLM entities from them.
         """
         verbose_proxy_logger.debug(
-            f"Creating Litellm Teams from Service Principal Teams: {service_principal_teams}"
+            f"Creating LiteLLM entities from Service Principal Teams: {service_principal_teams}"
         )
+
+        create_orgs = getattr(litellm, "entra_groups_also_create_orgs", False)
+
         for service_principal_team in service_principal_teams:
             litellm_team_id: Optional[str] = service_principal_team.get("principalId")
             litellm_team_name: Optional[str] = service_principal_team.get(
                 "principalDisplayName"
             )
+
             if not litellm_team_id:
                 verbose_proxy_logger.debug(
-                    f"Skipping team creation for {litellm_team_name} because it has no principalId"
+                    f"Skipping service principal team with no principalId: {service_principal_team}"
                 )
                 continue
 
+            organization_id: Optional[str] = None
+
+            if create_orgs:
+                # Create organization first (with graceful degradation)
+                try:
+                    await SSOAuthenticationHandler.create_litellm_org_from_sso_group(
+                        litellm_org_id=litellm_team_id,
+                        litellm_org_name=litellm_team_name,
+                    )
+                    organization_id = litellm_team_id
+                except Exception as e:
+                    verbose_proxy_logger.exception(
+                        f"Error creating organization for Entra group {litellm_team_id}: {e}"
+                    )
+                    # Continue - still create team as standalone
+
+            # Create team (org-scoped if org was created successfully)
             await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
                 litellm_team_id=litellm_team_id,
                 litellm_team_name=litellm_team_name,
+                organization_id=organization_id,
             )
 
 

@@ -600,3 +600,165 @@ class TestOrgMembership:
                 mock_prisma_client.db.litellm_organizationmembership.create.call_args
             )
             assert create_call.kwargs["data"]["user_role"] == "org_admin"
+
+
+# ============================================================================
+# CYCLE 5: Main Sync Function Integration
+# ============================================================================
+
+
+class TestMainSyncFunction:
+    """Tests for create_litellm_teams_from_service_principal_team_ids integration."""
+
+    @pytest.mark.asyncio
+    async def test_creates_org_and_team_when_flag_enabled(self, sample_entra_group):
+        """
+        GIVEN: entra_groups_also_create_orgs is True
+        WHEN: create_litellm_teams_from_service_principal_team_ids is called
+        THEN: Both organization and org-scoped team are created
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            MicrosoftSSOHandler,
+            SSOAuthenticationHandler,
+        )
+
+        litellm.entra_groups_also_create_orgs = True
+
+        with patch.object(
+            SSOAuthenticationHandler,
+            "create_litellm_org_from_sso_group",
+            new_callable=AsyncMock,
+        ) as mock_create_org:
+            with patch.object(
+                SSOAuthenticationHandler,
+                "create_litellm_team_from_sso_group",
+                new_callable=AsyncMock,
+            ) as mock_create_team:
+                await MicrosoftSSOHandler.create_litellm_teams_from_service_principal_team_ids(
+                    service_principal_teams=[sample_entra_group]
+                )
+
+                # Verify org creation was called
+                mock_create_org.assert_called_once_with(
+                    litellm_org_id="entra-group-id-123",
+                    litellm_org_name="Production LLM Team",
+                )
+
+                # Verify team creation was called with organization_id
+                mock_create_team.assert_called_once_with(
+                    litellm_team_id="entra-group-id-123",
+                    litellm_team_name="Production LLM Team",
+                    organization_id="entra-group-id-123",
+                )
+
+    @pytest.mark.asyncio
+    async def test_only_creates_team_when_flag_disabled(self, sample_entra_group):
+        """
+        GIVEN: entra_groups_also_create_orgs is False
+        WHEN: create_litellm_teams_from_service_principal_team_ids is called
+        THEN: Only standalone team is created (no organization)
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            MicrosoftSSOHandler,
+            SSOAuthenticationHandler,
+        )
+
+        litellm.entra_groups_also_create_orgs = False
+
+        with patch.object(
+            SSOAuthenticationHandler,
+            "create_litellm_org_from_sso_group",
+            new_callable=AsyncMock,
+        ) as mock_create_org:
+            with patch.object(
+                SSOAuthenticationHandler,
+                "create_litellm_team_from_sso_group",
+                new_callable=AsyncMock,
+            ) as mock_create_team:
+                await MicrosoftSSOHandler.create_litellm_teams_from_service_principal_team_ids(
+                    service_principal_teams=[sample_entra_group]
+                )
+
+                # Verify org creation was NOT called
+                mock_create_org.assert_not_called()
+
+                # Verify team creation was called without organization_id
+                mock_create_team.assert_called_once_with(
+                    litellm_team_id="entra-group-id-123",
+                    litellm_team_name="Production LLM Team",
+                    organization_id=None,
+                )
+
+    @pytest.mark.asyncio
+    async def test_handles_multiple_groups(self, sample_entra_groups):
+        """
+        GIVEN: entra_groups_also_create_orgs is True and multiple Entra groups
+        WHEN: create_litellm_teams_from_service_principal_team_ids is called
+        THEN: Org and team are created for each group
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            MicrosoftSSOHandler,
+            SSOAuthenticationHandler,
+        )
+
+        litellm.entra_groups_also_create_orgs = True
+
+        with patch.object(
+            SSOAuthenticationHandler,
+            "create_litellm_org_from_sso_group",
+            new_callable=AsyncMock,
+        ) as mock_create_org:
+            with patch.object(
+                SSOAuthenticationHandler,
+                "create_litellm_team_from_sso_group",
+                new_callable=AsyncMock,
+            ) as mock_create_team:
+                await MicrosoftSSOHandler.create_litellm_teams_from_service_principal_team_ids(
+                    service_principal_teams=sample_entra_groups
+                )
+
+                assert mock_create_org.call_count == 2
+                assert mock_create_team.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_graceful_degradation_on_org_creation_failure(
+        self, sample_entra_group
+    ):
+        """
+        GIVEN: entra_groups_also_create_orgs is True but org creation fails
+        WHEN: create_litellm_teams_from_service_principal_team_ids is called
+        THEN: Team is still created as standalone (graceful degradation)
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            MicrosoftSSOHandler,
+            SSOAuthenticationHandler,
+        )
+
+        litellm.entra_groups_also_create_orgs = True
+
+        with patch.object(
+            SSOAuthenticationHandler,
+            "create_litellm_org_from_sso_group",
+            new_callable=AsyncMock,
+            side_effect=Exception("Database connection error"),
+        ) as mock_create_org:
+            with patch.object(
+                SSOAuthenticationHandler,
+                "create_litellm_team_from_sso_group",
+                new_callable=AsyncMock,
+            ) as mock_create_team:
+                # Should not raise exception
+                await MicrosoftSSOHandler.create_litellm_teams_from_service_principal_team_ids(
+                    service_principal_teams=[sample_entra_group]
+                )
+
+                # Verify org creation was attempted
+                mock_create_org.assert_called_once()
+
+                # Verify team creation was still called with organization_id=None
+                # (fallback to standalone team)
+                mock_create_team.assert_called_once_with(
+                    litellm_team_id="entra-group-id-123",
+                    litellm_team_name="Production LLM Team",
+                    organization_id=None,
+                )
