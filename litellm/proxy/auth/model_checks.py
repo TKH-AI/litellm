@@ -111,6 +111,8 @@ def get_key_models(
         all_models = user_api_key_dict.models
         if SpecialModelNames.all_team_models.value in all_models:
             all_models = user_api_key_dict.team_models
+        if SpecialModelNames.all_org_models.value in all_models:
+            all_models = user_api_key_dict.organization_models or []
         if SpecialModelNames.all_proxy_models.value in all_models:
             all_models = proxy_model_list
 
@@ -127,6 +129,7 @@ def get_team_models(
     proxy_model_list: List[str],
     model_access_groups: Dict[str, List[str]],
     include_model_access_groups: Optional[bool] = False,
+    organization_models: Optional[List[str]] = None,
 ) -> List[str]:
     """
     Returns:
@@ -139,6 +142,10 @@ def get_team_models(
         all_models_set.update(team_models)
         if SpecialModelNames.all_team_models.value in all_models_set:
             all_models_set.update(team_models)
+        if SpecialModelNames.all_org_models.value in all_models_set:
+            all_models_set.discard(SpecialModelNames.all_org_models.value)
+            if organization_models:
+                all_models_set.update(organization_models)
         if SpecialModelNames.all_proxy_models.value in all_models_set:
             all_models_set.update(proxy_model_list)
 

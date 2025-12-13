@@ -7900,6 +7900,7 @@ async def model_info_v1(  # noqa: PLR0915
         team_models=user_api_key_dict.team_models,
         proxy_model_list=proxy_model_list,
         model_access_groups=model_access_groups,
+        organization_models=user_api_key_dict.organization_models,
     )
     all_models_str = get_complete_model_list(
         key_models=key_models,

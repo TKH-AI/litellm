@@ -2293,6 +2293,7 @@ class PrismaClient:
                             b.model_max_budget as litellm_budget_table_model_max_budget,
                             b.soft_budget as litellm_budget_table_soft_budget,
                             o.metadata as organization_metadata,
+                            o.models as organization_models,
                             b2.max_budget as organization_max_budget,
                             b2.tpm_limit as organization_tpm_limit,
                             b2.rpm_limit as organization_rpm_limit
@@ -2313,6 +2314,8 @@ class PrismaClient:
                             response["team_models"] = []
                         if response["team_blocked"] is None:
                             response["team_blocked"] = False
+                        if response.get("organization_models") is None:
+                            response["organization_models"] = []
 
                         team_member: Optional[Member] = None
                         if (
@@ -4146,6 +4149,7 @@ async def get_available_models_for_user(
         proxy_model_list=proxy_model_list,
         model_access_groups=model_access_groups,
         include_model_access_groups=include_model_access_groups,
+        organization_models=user_api_key_dict.organization_models,
     )
 
     # Get complete model list

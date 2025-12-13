@@ -48,6 +48,10 @@ const ModelsCell = ({ team }: ModelsCellProps) => {
                         <Badge key={index} size={"xs"} color="red">
                           <Text>All Proxy Models</Text>
                         </Badge>
+                      ) : model === "all-org-models" ? (
+                        <Badge key={index} size={"xs"} color="purple">
+                          <Text>All Organization Models</Text>
+                        </Badge>
                       ) : (
                         <Badge key={index} size={"xs"} color="blue">
                           <Text>
@@ -71,6 +75,10 @@ const ModelsCell = ({ team }: ModelsCellProps) => {
                           model === "all-proxy-models" ? (
                             <Badge key={index + 3} size={"xs"} color="red">
                               <Text>All Proxy Models</Text>
+                            </Badge>
+                          ) : model === "all-org-models" ? (
+                            <Badge key={index + 3} size={"xs"} color="purple">
+                              <Text>All Organization Models</Text>
                             </Badge>
                           ) : (
                             <Badge key={index + 3} size={"xs"} color="blue">
