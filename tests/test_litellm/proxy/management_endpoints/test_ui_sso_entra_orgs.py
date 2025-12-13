@@ -762,3 +762,184 @@ class TestMainSyncFunction:
                     litellm_team_name="Production LLM Team",
                     organization_id=None,
                 )
+
+
+# ============================================================================
+# CYCLE 6: User SSO Login Integration
+# ============================================================================
+
+
+class TestUserSSOLoginIntegration:
+    """Tests for adding users to orgs during SSO login."""
+
+    @pytest.mark.asyncio
+    async def test_adds_user_to_org_on_login_when_flag_enabled(self, sample_user):
+        """User is added to org membership when flag=True."""
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        litellm.entra_groups_also_create_orgs = True
+
+        mock_result = MagicMock()
+        mock_result.team_ids = ["entra-group-123", "entra-group-456"]
+
+        with patch(
+            "litellm.proxy.management_endpoints.ui_sso.add_missing_team_member",
+            new_callable=AsyncMock,
+        ):
+            with patch.object(
+                SSOAuthenticationHandler,
+                "add_user_to_org_membership",
+                new_callable=AsyncMock,
+            ) as mock_add_membership:
+                await SSOAuthenticationHandler.add_user_to_teams_from_sso_response(
+                    result=mock_result,
+                    user_info=sample_user,
+                )
+
+                # Verify membership was added for each org
+                assert mock_add_membership.call_count == 2
+                mock_add_membership.assert_any_call(
+                    user_id="user@example.com",
+                    organization_id="entra-group-123",
+                )
+                mock_add_membership.assert_any_call(
+                    user_id="user@example.com",
+                    organization_id="entra-group-456",
+                )
+
+    @pytest.mark.asyncio
+    async def test_does_not_add_to_org_when_flag_disabled(self, sample_user):
+        """User is NOT added to org membership when flag=False."""
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        litellm.entra_groups_also_create_orgs = False
+
+        mock_result = MagicMock()
+        mock_result.team_ids = ["entra-group-123"]
+
+        with patch(
+            "litellm.proxy.management_endpoints.ui_sso.add_missing_team_member",
+            new_callable=AsyncMock,
+        ):
+            with patch.object(
+                SSOAuthenticationHandler,
+                "add_user_to_org_membership",
+                new_callable=AsyncMock,
+            ) as mock_add_membership:
+                await SSOAuthenticationHandler.add_user_to_teams_from_sso_response(
+                    result=mock_result,
+                    user_info=sample_user,
+                )
+
+                mock_add_membership.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_still_adds_to_teams_regardless_of_flag(self, sample_user):
+        """User is added to teams regardless of flag setting."""
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        mock_result = MagicMock()
+        mock_result.team_ids = ["entra-group-123"]
+
+        with patch(
+            "litellm.proxy.management_endpoints.ui_sso.add_missing_team_member",
+            new_callable=AsyncMock,
+        ) as mock_add_team:
+            with patch.object(
+                SSOAuthenticationHandler,
+                "add_user_to_org_membership",
+                new_callable=AsyncMock,
+            ):
+                await SSOAuthenticationHandler.add_user_to_teams_from_sso_response(
+                    result=mock_result,
+                    user_info=sample_user,
+                )
+
+                mock_add_team.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handles_empty_team_ids(self, sample_user):
+        """No org membership is added when team_ids is empty."""
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        litellm.entra_groups_also_create_orgs = True
+
+        mock_result = MagicMock()
+        mock_result.team_ids = []
+
+        with patch(
+            "litellm.proxy.management_endpoints.ui_sso.add_missing_team_member",
+            new_callable=AsyncMock,
+        ):
+            with patch.object(
+                SSOAuthenticationHandler,
+                "add_user_to_org_membership",
+                new_callable=AsyncMock,
+            ) as mock_add_membership:
+                await SSOAuthenticationHandler.add_user_to_teams_from_sso_response(
+                    result=mock_result,
+                    user_info=sample_user,
+                )
+
+                mock_add_membership.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handles_none_user_info(self):
+        """No org membership is added when user_info is None."""
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        litellm.entra_groups_also_create_orgs = True
+
+        mock_result = MagicMock()
+        mock_result.team_ids = ["entra-group-123"]
+
+        with patch(
+            "litellm.proxy.management_endpoints.ui_sso.add_missing_team_member",
+            new_callable=AsyncMock,
+        ) as mock_add_team:
+            with patch.object(
+                SSOAuthenticationHandler,
+                "add_user_to_org_membership",
+                new_callable=AsyncMock,
+            ) as mock_add_membership:
+                await SSOAuthenticationHandler.add_user_to_teams_from_sso_response(
+                    result=mock_result,
+                    user_info=None,
+                )
+
+                # Neither team nor org membership should be added
+                mock_add_team.assert_not_called()
+                mock_add_membership.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_idempotent_on_relogin(self, sample_user, mock_prisma_client):
+        """Re-login doesn't create duplicate memberships (idempotent)."""
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        litellm.entra_groups_also_create_orgs = True
+
+        mock_result = MagicMock()
+        mock_result.team_ids = ["entra-group-123"]
+
+        # Simulate user already being a member
+        existing_membership = MagicMock()
+        mock_prisma_client.db.litellm_organizationmembership.find_first = AsyncMock(
+            return_value=existing_membership
+        )
+        mock_prisma_client.db.litellm_organizationmembership.create = AsyncMock()
+
+        with patch(
+            "litellm.proxy.management_endpoints.ui_sso.add_missing_team_member",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "litellm.proxy.proxy_server.prisma_client",
+                mock_prisma_client,
+            ):
+                await SSOAuthenticationHandler.add_user_to_teams_from_sso_response(
+                    result=mock_result,
+                    user_info=sample_user,
+                )
+
+                # Membership should not be created again
+                mock_prisma_client.db.litellm_organizationmembership.create.assert_not_called()

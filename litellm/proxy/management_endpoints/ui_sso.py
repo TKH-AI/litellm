@@ -1482,8 +1482,8 @@ class SSOAuthenticationHandler:
         user_info: Optional[Union[NewUserResponse, LiteLLM_UserTable]],
     ):
         """
-        Adds the user as a team member to the teams specified in the SSO responses `team_ids` field
-
+        Adds the user as a team member to the teams specified in the SSO responses `team_ids` field.
+        When entra_groups_also_create_orgs is enabled, also adds users to organization memberships.
 
         The `team_ids` field is populated by litellm after processing the SSO response
         """
@@ -1494,6 +1494,15 @@ class SSOAuthenticationHandler:
             return
         sso_teams = getattr(result, "team_ids", [])
         await add_missing_team_member(user_info=user_info, sso_teams=sso_teams)
+
+        # NEW: Add to organizations if flag is enabled
+        create_orgs = getattr(litellm, "entra_groups_also_create_orgs", False)
+        if create_orgs and user_info.user_id and sso_teams:
+            for org_id in sso_teams:
+                await SSOAuthenticationHandler.add_user_to_org_membership(
+                    user_id=user_info.user_id,
+                    organization_id=org_id,
+                )
 
     @staticmethod
     def verify_user_in_restricted_sso_group(
