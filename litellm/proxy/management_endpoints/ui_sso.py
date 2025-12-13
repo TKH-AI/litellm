@@ -1635,12 +1635,16 @@ class SSOAuthenticationHandler:
         - Adds the litellm_team_id and litellm_team_name to the DefaultTeamSSOParams object
         """
         if isinstance(default_team_params, dict):
-            _team_request = deepcopy(default_team_params)
-            _team_request["team_id"] = litellm_team_id
-            _team_request["team_alias"] = litellm_team_name
+            # Start with existing team_request values (preserves organization_id)
+            _team_request = team_request.model_dump()
+            # Overlay with default_team_params
+            _defaults = deepcopy(default_team_params)
+            _defaults["team_id"] = litellm_team_id
+            _defaults["team_alias"] = litellm_team_name
+            _team_request.update(_defaults)
             team_request = NewTeamRequest(**_team_request)
-        elif isinstance(litellm.default_team_params, DefaultTeamSSOParams):
-            _default_team_params = deepcopy(litellm.default_team_params)
+        elif isinstance(default_team_params, DefaultTeamSSOParams):
+            _default_team_params = deepcopy(default_team_params)
             _new_team_request = team_request.model_dump()
             _new_team_request.update(_default_team_params)
             team_request = NewTeamRequest(**_new_team_request)
@@ -1789,7 +1793,7 @@ class SSOAuthenticationHandler:
             )
 
         except Exception as e:
-            verbose_proxy_logger.debug(
+            verbose_proxy_logger.warning(
                 f"[Non-Blocking] Error adding user to org membership: {e}"
             )
 

@@ -510,6 +510,8 @@ class TestOrgScopedTeamCreation:
                 assert team_data.models == [SpecialModelNames.all_org_models.value]
                 # But other default_team_params should still be applied
                 assert team_data.max_budget == 100.0
+                # Critical: organization_id must be preserved
+                assert team_data.organization_id == "entra-group-123"
 
 
 # ============================================================================
