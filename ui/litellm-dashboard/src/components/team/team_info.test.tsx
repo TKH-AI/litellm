@@ -274,4 +274,193 @@ describe("TeamInfoView", () => {
       });
     });
   }, 10000);
+
+  it("should show 'All Organization Models' option for org-scoped teams", async () => {
+    vi.mocked(networking.teamInfoCall).mockResolvedValue({
+      team_id: "123",
+      team_info: {
+        team_alias: "Org Team",
+        team_id: "123",
+        organization_id: "org-123", // This makes it an org-scoped team
+        admins: ["admin@test.com"],
+        members: [],
+        members_with_roles: [],
+        metadata: {},
+        tpm_limit: null,
+        rpm_limit: null,
+        max_budget: null,
+        budget_duration: null,
+        models: ["gpt-4"],
+        blocked: false,
+        spend: 0,
+        max_parallel_requests: null,
+        budget_reset_at: null,
+        model_id: null,
+        litellm_model_table: null,
+        created_at: "2024-01-01T00:00:00Z",
+        team_member_budget_table: null,
+      },
+      keys: [],
+      team_memberships: [],
+    });
+
+    vi.mocked(networking.organizationInfoCall).mockResolvedValue({
+      organization_id: "org-123",
+      organization_name: "Test Organization",
+      spend: 0,
+      max_budget: null,
+      models: ["gpt-4", "gpt-3.5-turbo"],
+      tpm_limit: null,
+      rpm_limit: null,
+      members: null,
+    });
+
+    vi.mocked(networking.getGuardrailsList).mockResolvedValue({ guardrails: [] });
+    vi.mocked(networking.fetchMCPAccessGroups).mockResolvedValue([]);
+
+    render(
+      <TeamInfoView
+        teamId="123"
+        onUpdate={() => {}}
+        onClose={() => {}}
+        accessToken="123"
+        is_team_admin={true}
+        is_proxy_admin={true}
+        userModels={["gpt-4", "gpt-3.5-turbo"]}
+        editTeam={false}
+        premiumUser={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Org Team")).not.toBeNull();
+    });
+
+    const settingsTab = screen.getByRole("tab", { name: "Settings" });
+    act(() => {
+      fireEvent.click(settingsTab);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Team Settings")).toBeInTheDocument();
+    });
+
+    const editButton = screen.getByRole("button", { name: "Edit Settings" });
+    act(() => {
+      fireEvent.click(editButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Models")).toBeInTheDocument();
+    });
+
+    // Click on the Models select to open the dropdown
+    const modelsSelect = screen.getByLabelText("Models");
+    act(() => {
+      fireEvent.mouseDown(modelsSelect);
+    });
+
+    await waitFor(() => {
+      const dropdownOptions = screen.getAllByRole("option");
+      const optionTexts = dropdownOptions.map((option) => option.textContent);
+
+      // Org-scoped teams should show "All Organization Models" option
+      expect(optionTexts).toContain("All Organization Models");
+
+      // Org-scoped teams should NOT show "All Proxy Models" option
+      expect(optionTexts).not.toContain("All Proxy Models");
+
+      // Org-scoped teams should NOT show "No Default Models" option
+      expect(optionTexts).not.toContain("No Default Models");
+    });
+  }, 10000);
+
+  it("should show 'All Proxy Models' and 'No Default Models' for standalone teams", async () => {
+    vi.mocked(networking.teamInfoCall).mockResolvedValue({
+      team_id: "123",
+      team_info: {
+        team_alias: "Standalone Team",
+        team_id: "123",
+        organization_id: null, // No organization - standalone team
+        admins: ["admin@test.com"],
+        members: [],
+        members_with_roles: [],
+        metadata: {},
+        tpm_limit: null,
+        rpm_limit: null,
+        max_budget: null,
+        budget_duration: null,
+        models: ["gpt-4"],
+        blocked: false,
+        spend: 0,
+        max_parallel_requests: null,
+        budget_reset_at: null,
+        model_id: null,
+        litellm_model_table: null,
+        created_at: "2024-01-01T00:00:00Z",
+        team_member_budget_table: null,
+      },
+      keys: [],
+      team_memberships: [],
+    });
+
+    vi.mocked(networking.getGuardrailsList).mockResolvedValue({ guardrails: [] });
+    vi.mocked(networking.fetchMCPAccessGroups).mockResolvedValue([]);
+
+    render(
+      <TeamInfoView
+        teamId="123"
+        onUpdate={() => {}}
+        onClose={() => {}}
+        accessToken="123"
+        is_team_admin={true}
+        is_proxy_admin={true}
+        userModels={["gpt-4", "gpt-3.5-turbo", "all-proxy-models"]}
+        editTeam={false}
+        premiumUser={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Standalone Team")).not.toBeNull();
+    });
+
+    const settingsTab = screen.getByRole("tab", { name: "Settings" });
+    act(() => {
+      fireEvent.click(settingsTab);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Team Settings")).toBeInTheDocument();
+    });
+
+    const editButton = screen.getByRole("button", { name: "Edit Settings" });
+    act(() => {
+      fireEvent.click(editButton);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Models")).toBeInTheDocument();
+    });
+
+    // Click on the Models select to open the dropdown
+    const modelsSelect = screen.getByLabelText("Models");
+    act(() => {
+      fireEvent.mouseDown(modelsSelect);
+    });
+
+    await waitFor(() => {
+      const dropdownOptions = screen.getAllByRole("option");
+      const optionTexts = dropdownOptions.map((option) => option.textContent);
+
+      // Standalone teams should show "All Proxy Models" option (when user has access)
+      expect(optionTexts).toContain("All Proxy Models");
+
+      // Standalone teams should show "No Default Models" option
+      expect(optionTexts).toContain("No Default Models");
+
+      // Standalone teams should NOT show "All Organization Models" option
+      expect(optionTexts).not.toContain("All Organization Models");
+    });
+  }, 10000);
 });
