@@ -36,6 +36,7 @@ from litellm.proxy._types import (
     LiteLLM_UserTable,
     LitellmUserRoles,
     Member,
+    NewOrganizationRequest,
     NewTeamRequest,
     NewUserRequest,
     NewUserResponse,
@@ -1624,8 +1625,95 @@ class SSOAuthenticationHandler:
         litellm_org_id: str,
         litellm_org_name: Optional[str] = None,
     ) -> Optional[LiteLLM_OrganizationTable]:
-        """Creates Organization from SSO Group. Implemented in Task 2-B."""
-        raise NotImplementedError("Task 2-B")
+        """
+        Creates a LiteLLM Organization from a SSO Group ID.
+
+        Your SSO provider might have groups that should be created as Organizations on LiteLLM.
+
+        Use this helper to create a LiteLLM Organization from a SSO Group ID.
+
+        Args:
+            litellm_org_id: The ID for the org (Entra Group ID)
+            litellm_org_name: The display name for the org (Entra Group Display Name)
+
+        Returns:
+            The created/existing organization, or None on error
+        """
+        from litellm.proxy.proxy_server import prisma_client
+        from litellm.proxy.management_endpoints.organization_endpoints import (
+            new_organization,
+        )
+
+        if prisma_client is None:
+            raise ProxyException(
+                message="Prisma client not found. Set it in the proxy_server.py file",
+                type=ProxyErrorTypes.auth_error,
+                param="prisma_client",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        try:
+            # Check if organization already exists (idempotency)
+            existing_org = await prisma_client.db.litellm_organizationtable.find_first(
+                where={"organization_id": litellm_org_id}
+            )
+            verbose_proxy_logger.debug(f"Organization lookup result: {existing_org}")
+
+            if existing_org:
+                verbose_proxy_logger.debug(
+                    f"Organization already exists: {litellm_org_id} - {litellm_org_name}"
+                )
+                return LiteLLM_OrganizationTable(**existing_org.model_dump())
+
+            # Build organization request
+            org_data = NewOrganizationRequest(
+                organization_id=litellm_org_id,
+                organization_alias=litellm_org_name or litellm_org_id,
+            )
+
+            # Apply default_team_params if configured
+            if litellm.default_team_params:
+                default_params = litellm.default_team_params
+                if isinstance(default_params, dict):
+                    if "models" in default_params:
+                        org_data.models = default_params["models"]
+                    if "max_budget" in default_params:
+                        org_data.max_budget = default_params["max_budget"]
+                    if "budget_duration" in default_params:
+                        org_data.budget_duration = default_params["budget_duration"]
+                    if "tpm_limit" in default_params:
+                        org_data.tpm_limit = default_params["tpm_limit"]
+                    if "rpm_limit" in default_params:
+                        org_data.rpm_limit = default_params["rpm_limit"]
+                else:
+                    # DefaultTeamSSOParams object
+                    org_data.models = default_params.models or []
+                    org_data.max_budget = default_params.max_budget
+                    org_data.budget_duration = default_params.budget_duration
+                    org_data.tpm_limit = default_params.tpm_limit
+                    org_data.rpm_limit = default_params.rpm_limit
+
+            # Create the organization
+            created_org = await new_organization(
+                data=org_data,
+                user_api_key_dict=UserAPIKeyAuth(
+                    user_role=LitellmUserRoles.PROXY_ADMIN,
+                    token="",
+                    key_alias=f"litellm.{SSOAuthenticationHandler.__name__}",
+                ),
+            )
+
+            verbose_proxy_logger.info(
+                f"Created organization from SSO group: {litellm_org_id} - {litellm_org_name}"
+            )
+
+            return created_org
+
+        except Exception as e:
+            verbose_proxy_logger.exception(
+                f"Error creating organization from SSO group: {e}"
+            )
+            return None
 
     @staticmethod
     async def add_user_to_org_membership(

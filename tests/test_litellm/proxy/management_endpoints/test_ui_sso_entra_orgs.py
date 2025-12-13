@@ -146,3 +146,160 @@ class TestConfigurationFlag:
 
         setattr(litellm, "entra_groups_also_create_orgs", False)
         assert litellm.entra_groups_also_create_orgs is False
+
+
+# ============================================================================
+# CYCLE 2: Organization Creation from SSO Group
+# ============================================================================
+
+
+class TestCreateOrgFromSSOGroup:
+    """Tests for create_litellm_org_from_sso_group function."""
+
+    @pytest.mark.asyncio
+    async def test_creates_org_with_correct_id_and_alias(self, mock_prisma_client):
+        """
+        GIVEN: An Entra group ID and name
+        WHEN: create_litellm_org_from_sso_group is called
+        THEN: Organization is created with matching ID and alias
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        # Setup: org does not exist
+        mock_prisma_client.db.litellm_organizationtable.find_first = AsyncMock(
+            return_value=None
+        )
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.organization_endpoints.new_organization"
+            ) as mock_new_org:
+                mock_new_org.return_value = MagicMock(organization_id="entra-group-123")
+
+                result = await SSOAuthenticationHandler.create_litellm_org_from_sso_group(
+                    litellm_org_id="entra-group-123",
+                    litellm_org_name="My Entra Group",
+                )
+
+                # Verify new_organization was called with correct params
+                mock_new_org.assert_called_once()
+                call_args = mock_new_org.call_args
+                org_data = call_args.kwargs.get("data") or call_args.args[0]
+
+                assert org_data.organization_id == "entra-group-123"
+                assert org_data.organization_alias == "My Entra Group"
+
+    @pytest.mark.asyncio
+    async def test_applies_default_team_params_to_org(
+        self, mock_prisma_client, default_team_params
+    ):
+        """
+        GIVEN: default_team_params is configured
+        WHEN: create_litellm_org_from_sso_group is called
+        THEN: Organization is created with default_team_params values
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        litellm.default_team_params = default_team_params
+        mock_prisma_client.db.litellm_organizationtable.find_first = AsyncMock(
+            return_value=None
+        )
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.organization_endpoints.new_organization"
+            ) as mock_new_org:
+                mock_new_org.return_value = MagicMock(organization_id="entra-group-123")
+
+                await SSOAuthenticationHandler.create_litellm_org_from_sso_group(
+                    litellm_org_id="entra-group-123",
+                    litellm_org_name="My Entra Group",
+                )
+
+                call_args = mock_new_org.call_args
+                org_data = call_args.kwargs.get("data") or call_args.args[0]
+
+                assert org_data.max_budget == 100.0
+                assert org_data.budget_duration == "30d"
+                assert org_data.models == ["gpt-4", "gpt-3.5-turbo"]
+                assert org_data.tpm_limit == 10000
+                assert org_data.rpm_limit == 1000
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_duplicate_org(self, mock_prisma_client):
+        """
+        GIVEN: An organization already exists with the given ID
+        WHEN: create_litellm_org_from_sso_group is called
+        THEN: No new organization is created, existing org is returned
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        existing_org = MagicMock()
+        existing_org.organization_id = "entra-group-123"
+        existing_org.model_dump.return_value = {"organization_id": "entra-group-123"}
+        mock_prisma_client.db.litellm_organizationtable.find_first = AsyncMock(
+            return_value=existing_org
+        )
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.organization_endpoints.new_organization"
+            ) as mock_new_org:
+                result = await SSOAuthenticationHandler.create_litellm_org_from_sso_group(
+                    litellm_org_id="entra-group-123",
+                    litellm_org_name="My Entra Group",
+                )
+
+                # new_organization should NOT be called
+                mock_new_org.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handles_no_default_team_params(self, mock_prisma_client):
+        """
+        GIVEN: No default_team_params configured
+        WHEN: create_litellm_org_from_sso_group is called
+        THEN: Organization is created with no budget/model restrictions
+        """
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        litellm.default_team_params = None
+        mock_prisma_client.db.litellm_organizationtable.find_first = AsyncMock(
+            return_value=None
+        )
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.organization_endpoints.new_organization"
+            ) as mock_new_org:
+                mock_new_org.return_value = MagicMock(organization_id="entra-group-123")
+
+                await SSOAuthenticationHandler.create_litellm_org_from_sso_group(
+                    litellm_org_id="entra-group-123",
+                    litellm_org_name="My Entra Group",
+                )
+
+                call_args = mock_new_org.call_args
+                org_data = call_args.kwargs.get("data") or call_args.args[0]
+
+                # Should create org without budget restrictions
+                assert org_data.organization_id == "entra-group-123"
