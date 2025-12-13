@@ -664,43 +664,40 @@ const TeamInfoView: React.FC<TeamInfoProps> = ({
                   <Form.Item
                     label="Models"
                     name="models"
-                    rules={[{ required: true, message: "Please select at least one model" }]}
+                    rules={[{ required: true, message: info.organization_id ? "Teams under an organization must have at least one model selected" : "Please select at least one model" }]}
                   >
-                    <Select mode="multiple" placeholder="Select models">
-                      {(() => {
-                        let shouldShowAllProxyModels = false;
-
-                        if (organization) {
-                          // Team is in an organization
-                          if (organization.models.length === 0 || organization.models.includes("all-proxy-models")) {
-                            // Organization has empty array [] or "all-proxy-models"
-                            shouldShowAllProxyModels = true;
-                          }
-                          // Otherwise (organization has specific models), don't show "all-proxy-models"
-                        } else {
-                          // Team is not in an organization
-                          shouldShowAllProxyModels = is_proxy_admin || userModels.includes("all-proxy-models");
+                    <Select
+                      mode="multiple"
+                      // Disable virtual scrolling - required for tests (JSDOM can't calculate viewport dimensions)
+                      virtual={false}
+                      placeholder={info.organization_id ? "Select models (required for org teams)" : "Select models"}
+                      onChange={(values: string[]) => {
+                        // When "all-org-models" is selected, make it exclusive
+                        if (values.includes("all-org-models")) {
+                          form.setFieldsValue({ models: ["all-org-models"] });
                         }
-
-                        return shouldShowAllProxyModels ? (
+                        // When "all-proxy-models" is selected, make it exclusive
+                        else if (values.includes("all-proxy-models")) {
+                          form.setFieldsValue({ models: ["all-proxy-models"] });
+                        }
+                      }}
+                    >
+                      {info.organization_id ? (
+                        <Select.Option key="all-org-models" value="all-org-models">
+                          All Organization Models
+                        </Select.Option>
+                      ) : (
+                        (is_proxy_admin || userModels.includes("all-proxy-models")) && (
                           <Select.Option key="all-proxy-models" value="all-proxy-models">
                             All Proxy Models
                           </Select.Option>
-                        ) : null;
-                      })()}
-                      {(() => {
-                        // Show "no-default-models" option if:
-                        // 1. Team is not in an organization, OR
-                        // 2. Team is in an organization and organization's models include "no-default-models"
-                        const shouldShowNoDefaultModels =
-                          !organization || organization.models.includes("no-default-models");
-
-                        return shouldShowNoDefaultModels ? (
-                          <Select.Option key="no-default-models" value="no-default-models">
-                            No Default Models
-                          </Select.Option>
-                        ) : null;
-                      })()}
+                        )
+                      )}
+                      {!info.organization_id && (
+                        <Select.Option key="no-default-models" value="no-default-models">
+                          No Default Models
+                        </Select.Option>
+                      )}
                       {Array.from(new Set(modelsToPick)).map((model, idx) => (
                         <Select.Option key={idx} value={model}>
                           {getModelDisplayName(model)}

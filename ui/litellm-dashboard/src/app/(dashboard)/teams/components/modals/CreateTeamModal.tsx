@@ -342,17 +342,50 @@ const CreateTeamModal = ({
             label={
               <span>
                 Models{" "}
-                <Tooltip title="These are the models that your selected team has access to">
+                <Tooltip title={currentOrgForCreateTeam
+                  ? "Teams under an organization must have models selected. Choose 'All Organization Models' to inherit the organization's model restrictions."
+                  : "These are the models that your selected team has access to"
+                }>
                   <InfoCircleOutlined style={{ marginLeft: "4px" }} />
                 </Tooltip>
               </span>
             }
             name="models"
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (currentOrgForCreateTeam && (!value || value.length === 0)) {
+                    return Promise.reject(new Error("Teams under an organization must have at least one model selected. Use 'All Organization Models' to inherit organization's models."));
+                  }
+                  return Promise.resolve();
+                },
+              },
+            ]}
           >
-            <Select2 mode="multiple" placeholder="Select models" style={{ width: "100%" }}>
-              <Select2.Option key="all-proxy-models" value="all-proxy-models">
-                All Proxy Models
-              </Select2.Option>
+            <Select2
+              mode="multiple"
+              placeholder={currentOrgForCreateTeam ? "Select models (required for org teams)" : "Select models"}
+              style={{ width: "100%" }}
+              onChange={(values) => {
+                // When "all-org-models" is selected, make it exclusive
+                if (values.includes("all-org-models")) {
+                  form.setFieldsValue({ models: ["all-org-models"] });
+                }
+                // When "all-proxy-models" is selected, make it exclusive
+                else if (values.includes("all-proxy-models")) {
+                  form.setFieldsValue({ models: ["all-proxy-models"] });
+                }
+              }}
+            >
+              {currentOrgForCreateTeam ? (
+                <Select2.Option key="all-org-models" value="all-org-models">
+                  All Organization Models
+                </Select2.Option>
+              ) : (
+                <Select2.Option key="all-proxy-models" value="all-proxy-models">
+                  All Proxy Models
+                </Select2.Option>
+              )}
               {modelsToPick.map((model) => (
                 <Select2.Option key={model} value={model}>
                   {getModelDisplayName(model)}

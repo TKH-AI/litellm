@@ -483,8 +483,44 @@ async def _check_org_team_limits(
         )
 
     # Validate team models against organization's allowed models
-    if data.models is not None and len(org_table.models) > 0:
+    # For NewTeamRequest: models must be specified and non-empty
+    # For UpdateTeamRequest: models=None means "don't change" (partial update), but [] is rejected
+    if isinstance(data, NewTeamRequest):
+        # New teams must specify models
+        if data.models is None or len(data.models) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": f"Teams under an organization must specify a model list. Use 'all-org-models' to inherit organization's models, or specify explicit models from: {org_table.models}. Organization: {org_table.organization_id}"
+                },
+            )
+    elif isinstance(data, UpdateTeamRequest):
+        # For updates: None means "don't change", only reject explicit empty list
+        if data.models is not None and len(data.models) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": f"Cannot set empty model list for org-scoped teams. Use 'all-org-models' to inherit organization's models, or specify explicit models from: {org_table.models}. Organization: {org_table.organization_id}"
+                },
+            )
+
+    # Org-scoped teams cannot use 'all-proxy-models' - they must be restricted to org's models
+    # Only check if models is specified (not None for updates)
+    if data.models is not None and SpecialModelNames.all_proxy_models.value in data.models:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Teams under an organization cannot use 'all-proxy-models'. Use 'all-org-models' to inherit organization's models, or specify explicit models from: {org_table.models}. Organization: {org_table.organization_id}"
+            },
+        )
+
+    # If org has restricted models, validate team's models are in org's allowed list
+    # Note: 'all-org-models' is a special value that is always allowed
+    # Only validate if models is specified (not None for updates)
+    if len(org_table.models) > 0 and data.models is not None:
         for m in data.models:
+            if m == SpecialModelNames.all_org_models.value:
+                continue  # 'all-org-models' is always allowed - it resolves to org's models at runtime
             if m not in org_table.models:
                 raise HTTPException(
                     status_code=400,

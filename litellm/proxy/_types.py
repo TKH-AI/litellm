@@ -2042,6 +2042,7 @@ class LiteLLM_VerificationTokenView(LiteLLM_VerificationToken):
     organization_tpm_limit: Optional[int] = None
     organization_rpm_limit: Optional[int] = None
     organization_metadata: Optional[dict] = None
+    organization_models: Optional[List] = None
 
     # Time stamps
     last_refreshed_at: Optional[float] = None  # last time joint view was pulled from db
@@ -2490,6 +2491,7 @@ class WebhookEvent(CallInfo):
 class SpecialModelNames(enum.Enum):
     all_team_models = "all-team-models"
     all_proxy_models = "all-proxy-models"
+    all_org_models = "all-org-models"
     no_default_models = "no-default-models"
 
 
