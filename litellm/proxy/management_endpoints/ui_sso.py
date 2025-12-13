@@ -1738,8 +1738,51 @@ class SSOAuthenticationHandler:
         organization_id: str,
         user_role: str = "internal_user",
     ) -> None:
-        """Adds user to org membership. Implemented in Task 2-D."""
-        raise NotImplementedError("Task 2-D")
+        """
+        Adds a user to an organization's membership if not already a member.
+
+        Args:
+            user_id: The user's ID
+            organization_id: The organization ID
+            user_role: Role in the org (default: internal_user)
+        """
+        from litellm.proxy.proxy_server import prisma_client
+
+        if prisma_client is None:
+            return
+
+        try:
+            # Check if membership already exists
+            existing_membership = await prisma_client.db.litellm_organizationmembership.find_first(
+                where={
+                    "user_id": user_id,
+                    "organization_id": organization_id,
+                }
+            )
+
+            if existing_membership:
+                verbose_proxy_logger.debug(
+                    f"User {user_id} already member of org {organization_id}"
+                )
+                return
+
+            # Create membership
+            await prisma_client.db.litellm_organizationmembership.create(
+                data={
+                    "user_id": user_id,
+                    "organization_id": organization_id,
+                    "user_role": user_role,
+                }
+            )
+
+            verbose_proxy_logger.info(
+                f"Added user {user_id} to organization {organization_id}"
+            )
+
+        except Exception as e:
+            verbose_proxy_logger.debug(
+                f"[Non-Blocking] Error adding user to org membership: {e}"
+            )
 
     @staticmethod
     def _get_cli_state(

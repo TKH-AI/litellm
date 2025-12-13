@@ -510,3 +510,93 @@ class TestOrgScopedTeamCreation:
                 assert team_data.models == [SpecialModelNames.all_org_models.value]
                 # But other default_team_params should still be applied
                 assert team_data.max_budget == 100.0
+
+
+# ============================================================================
+# CYCLE 4: Organization Membership
+# ============================================================================
+
+
+class TestOrgMembership:
+    """Tests for adding users to organization membership."""
+
+    @pytest.mark.asyncio
+    async def test_adds_user_to_org_membership(self, mock_prisma_client):
+        """User is added to org membership when function called."""
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        mock_prisma_client.db.litellm_organizationmembership.find_first = AsyncMock(
+            return_value=None
+        )
+        mock_prisma_client.db.litellm_organizationmembership.create = AsyncMock()
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            await SSOAuthenticationHandler.add_user_to_org_membership(
+                user_id="user@example.com",
+                organization_id="entra-group-123",
+            )
+
+            mock_prisma_client.db.litellm_organizationmembership.create.assert_called_once()
+            create_call = (
+                mock_prisma_client.db.litellm_organizationmembership.create.call_args
+            )
+
+            assert create_call.kwargs["data"]["user_id"] == "user@example.com"
+            assert create_call.kwargs["data"]["organization_id"] == "entra-group-123"
+            assert create_call.kwargs["data"]["user_role"] == "internal_user"
+
+    @pytest.mark.asyncio
+    async def test_does_not_create_duplicate_membership(self, mock_prisma_client):
+        """No duplicate membership is created."""
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        existing_membership = MagicMock()
+        mock_prisma_client.db.litellm_organizationmembership.find_first = AsyncMock(
+            return_value=existing_membership
+        )
+        mock_prisma_client.db.litellm_organizationmembership.create = AsyncMock()
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            await SSOAuthenticationHandler.add_user_to_org_membership(
+                user_id="user@example.com",
+                organization_id="entra-group-123",
+            )
+
+            mock_prisma_client.db.litellm_organizationmembership.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_custom_user_role(self, mock_prisma_client):
+        """Membership is created with custom role when provided."""
+        from litellm.proxy.management_endpoints.ui_sso import (
+            SSOAuthenticationHandler,
+        )
+
+        mock_prisma_client.db.litellm_organizationmembership.find_first = AsyncMock(
+            return_value=None
+        )
+        mock_prisma_client.db.litellm_organizationmembership.create = AsyncMock()
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            await SSOAuthenticationHandler.add_user_to_org_membership(
+                user_id="user@example.com",
+                organization_id="entra-group-123",
+                user_role="org_admin",
+            )
+
+            create_call = (
+                mock_prisma_client.db.litellm_organizationmembership.create.call_args
+            )
+            assert create_call.kwargs["data"]["user_role"] == "org_admin"
