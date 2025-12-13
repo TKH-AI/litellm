@@ -42,6 +42,7 @@ from litellm.proxy._types import (
     NewUserResponse,
     ProxyErrorTypes,
     ProxyException,
+    SpecialModelNames,
     SSOUserDefinedValues,
     TeamMemberAddRequest,
     UserAPIKeyAuth,
@@ -1536,6 +1537,7 @@ class SSOAuthenticationHandler:
     async def create_litellm_team_from_sso_group(
         litellm_team_id: str,
         litellm_team_name: Optional[str] = None,
+        organization_id: Optional[str] = None,
     ):
         """
         Creates a Litellm Team from a SSO Group ID
@@ -1547,6 +1549,7 @@ class SSOAuthenticationHandler:
         Args:
             litellm_team_id (str): The ID of the Litellm Team
             litellm_team_name (Optional[str]): The name of the Litellm Team
+            organization_id (Optional[str]): If provided, team will be org-scoped
         """
         from litellm.proxy.proxy_server import prisma_client
 
@@ -1564,6 +1567,7 @@ class SSOAuthenticationHandler:
             verbose_proxy_logger.debug(f"Team object: {team_obj}")
 
             # only create a new team if it doesn't exist
+            # Do NOT update existing teams (preserves manual configuration)
             if team_obj:
                 verbose_proxy_logger.debug(
                     f"Team already exists: {litellm_team_id} - {litellm_team_name}"
@@ -1573,7 +1577,13 @@ class SSOAuthenticationHandler:
             team_request: NewTeamRequest = NewTeamRequest(
                 team_id=litellm_team_id,
                 team_alias=litellm_team_name,
+                organization_id=organization_id,
             )
+
+            # If org-scoped, set models to inherit from org
+            if organization_id:
+                team_request.models = [SpecialModelNames.all_org_models.value]
+
             if litellm.default_team_params:
                 team_request = SSOAuthenticationHandler._cast_and_deepcopy_litellm_default_team_params(
                     default_team_params=litellm.default_team_params,
@@ -1581,6 +1591,9 @@ class SSOAuthenticationHandler:
                     litellm_team_name=litellm_team_name,
                     team_request=team_request,
                 )
+                # Override models for org-scoped teams (after applying defaults)
+                if organization_id:
+                    team_request.models = [SpecialModelNames.all_org_models.value]
 
             await new_team(
                 data=team_request,
@@ -1590,6 +1603,10 @@ class SSOAuthenticationHandler:
                     token="",
                     key_alias=f"litellm.{MicrosoftSSOHandler.__name__}",
                 ),
+            )
+
+            verbose_proxy_logger.info(
+                f"Created team from SSO group: {litellm_team_id} (org_scoped={organization_id is not None})"
             )
         except Exception as e:
             verbose_proxy_logger.exception(f"Error creating Litellm Team: {e}")

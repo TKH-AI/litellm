@@ -303,3 +303,210 @@ class TestCreateOrgFromSSOGroup:
 
                 # Should create org without budget restrictions
                 assert org_data.organization_id == "entra-group-123"
+
+
+# ============================================================================
+# CYCLE 3: Org-Scoped Team Creation
+# ============================================================================
+
+
+class TestOrgScopedTeamCreation:
+    """Tests for org-scoped team creation."""
+
+    @pytest.mark.asyncio
+    async def test_creates_team_with_organization_id(self, mock_prisma_client):
+        """
+        GIVEN: An organization_id is provided
+        WHEN: create_litellm_team_from_sso_group is called
+        THEN: Team is created with organization_id set
+        """
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        mock_prisma_client.db.litellm_teamtable.find_first = AsyncMock(return_value=None)
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.ui_sso.new_team"
+            ) as mock_new_team:
+                mock_new_team.return_value = MagicMock(team_id="entra-group-123")
+
+                await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
+                    litellm_team_id="entra-group-123",
+                    litellm_team_name="My Team",
+                    organization_id="entra-group-123",  # NEW PARAMETER
+                )
+
+                call_args = mock_new_team.call_args
+                team_data = call_args.kwargs.get("data") or call_args.args[0]
+                assert team_data.organization_id == "entra-group-123"
+
+    @pytest.mark.asyncio
+    async def test_sets_models_to_all_org_models_when_org_scoped(
+        self, mock_prisma_client
+    ):
+        """
+        GIVEN: An organization_id is provided
+        WHEN: create_litellm_team_from_sso_group is called
+        THEN: Team models is set to ['all-org-models']
+        """
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        mock_prisma_client.db.litellm_teamtable.find_first = AsyncMock(return_value=None)
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.ui_sso.new_team"
+            ) as mock_new_team:
+                mock_new_team.return_value = MagicMock(team_id="entra-group-123")
+
+                await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
+                    litellm_team_id="entra-group-123",
+                    litellm_team_name="My Team",
+                    organization_id="entra-group-123",
+                )
+
+                call_args = mock_new_team.call_args
+                team_data = call_args.kwargs.get("data") or call_args.args[0]
+                assert team_data.models == [SpecialModelNames.all_org_models.value]
+
+    @pytest.mark.asyncio
+    async def test_does_not_update_existing_team_fields(self, mock_prisma_client):
+        """
+        GIVEN: An existing standalone team (organization_id=None)
+        WHEN: create_litellm_team_from_sso_group is called with organization_id
+        THEN: Existing team is NOT updated
+        """
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        existing_team = MagicMock()
+        existing_team.team_id = "entra-group-123"
+        existing_team.organization_id = None  # Standalone
+        mock_prisma_client.db.litellm_teamtable.find_first = AsyncMock(
+            return_value=existing_team
+        )
+        mock_prisma_client.db.litellm_teamtable.update = AsyncMock()
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.ui_sso.new_team"
+            ) as mock_new_team:
+                await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
+                    litellm_team_id="entra-group-123",
+                    litellm_team_name="My Team",
+                    organization_id="entra-group-123",
+                )
+
+                # new_team should NOT be called for existing teams
+                mock_new_team.assert_not_called()
+                # No update should be performed
+                mock_prisma_client.db.litellm_teamtable.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_standalone_team_when_no_organization_id(self, mock_prisma_client):
+        """
+        GIVEN: No organization_id provided
+        WHEN: create_litellm_team_from_sso_group is called
+        THEN: Standalone team is created (organization_id=None)
+        """
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        mock_prisma_client.db.litellm_teamtable.find_first = AsyncMock(return_value=None)
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.ui_sso.new_team"
+            ) as mock_new_team:
+                mock_new_team.return_value = MagicMock(team_id="entra-group-123")
+
+                await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
+                    litellm_team_id="entra-group-123",
+                    litellm_team_name="My Team",
+                    # No organization_id
+                )
+
+                call_args = mock_new_team.call_args
+                team_data = call_args.kwargs.get("data") or call_args.args[0]
+                assert team_data.organization_id is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_update_already_org_scoped_team(self, mock_prisma_client):
+        """
+        GIVEN: An existing org-scoped team (organization_id already set)
+        WHEN: create_litellm_team_from_sso_group is called
+        THEN: Existing team is NOT updated
+        """
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        existing_team = MagicMock()
+        existing_team.team_id = "entra-group-123"
+        existing_team.organization_id = "entra-group-123"  # Already org-scoped
+        mock_prisma_client.db.litellm_teamtable.find_first = AsyncMock(
+            return_value=existing_team
+        )
+        mock_prisma_client.db.litellm_teamtable.update = AsyncMock()
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.ui_sso.new_team"
+            ) as mock_new_team:
+                await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
+                    litellm_team_id="entra-group-123",
+                    litellm_team_name="My Team",
+                    organization_id="entra-group-123",
+                )
+
+                # new_team should NOT be called for existing teams
+                mock_new_team.assert_not_called()
+                # No update should be performed
+                mock_prisma_client.db.litellm_teamtable.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_models_override_after_default_team_params(
+        self, mock_prisma_client, default_team_params
+    ):
+        """
+        GIVEN: default_team_params with models configured AND organization_id provided
+        WHEN: create_litellm_team_from_sso_group is called
+        THEN: Team models is set to ['all-org-models'], overriding default_team_params
+        """
+        from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
+
+        litellm.default_team_params = default_team_params  # Has models: ["gpt-4", ...]
+        mock_prisma_client.db.litellm_teamtable.find_first = AsyncMock(return_value=None)
+
+        with patch(
+            "litellm.proxy.proxy_server.prisma_client",
+            mock_prisma_client,
+        ):
+            with patch(
+                "litellm.proxy.management_endpoints.ui_sso.new_team"
+            ) as mock_new_team:
+                mock_new_team.return_value = MagicMock(team_id="entra-group-123")
+
+                await SSOAuthenticationHandler.create_litellm_team_from_sso_group(
+                    litellm_team_id="entra-group-123",
+                    litellm_team_name="My Team",
+                    organization_id="entra-group-123",
+                )
+
+                call_args = mock_new_team.call_args
+                team_data = call_args.kwargs.get("data") or call_args.args[0]
+                # Models should be overridden to all-org-models, NOT default_team_params models
+                assert team_data.models == [SpecialModelNames.all_org_models.value]
+                # But other default_team_params should still be applied
+                assert team_data.max_budget == 100.0
