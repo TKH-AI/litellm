@@ -105,7 +105,7 @@ def reset_litellm_settings():
 
 
 # ============================================================================
-# CYCLE 1: Configuration Flag Recognition
+# Configuration Flag Recognition
 # ============================================================================
 
 
@@ -149,7 +149,7 @@ class TestConfigurationFlag:
 
 
 # ============================================================================
-# CYCLE 2: Organization Creation from SSO Group
+# Organization Creation from SSO Group
 # ============================================================================
 
 
@@ -306,7 +306,7 @@ class TestCreateOrgFromSSOGroup:
 
 
 # ============================================================================
-# CYCLE 3: Org-Scoped Team Creation
+# Org-Scoped Team Creation
 # ============================================================================
 
 
@@ -515,7 +515,7 @@ class TestOrgScopedTeamCreation:
 
 
 # ============================================================================
-# CYCLE 4: Organization Membership
+# Organization Membership
 # ============================================================================
 
 
@@ -605,7 +605,7 @@ class TestOrgMembership:
 
 
 # ============================================================================
-# CYCLE 5: Main Sync Function Integration
+# Main Sync Function Integration
 # ============================================================================
 
 
@@ -767,7 +767,7 @@ class TestMainSyncFunction:
 
 
 # ============================================================================
-# CYCLE 6: User SSO Login Integration
+# User SSO Login Integration
 # ============================================================================
 
 
@@ -948,7 +948,7 @@ class TestUserSSOLoginIntegration:
 
 
 # ============================================================================
-# CYCLE 7: End-to-End Integration Tests
+# End-to-End Integration Tests
 # ============================================================================
 
 
@@ -1473,12 +1473,12 @@ class TestDatabaseIntegration:
 
 
 class TestEdgeCases:
-    """Tests for all edge cases from 06-EDGE-CASES.md."""
+    """Tests edge cases"""
 
     @pytest.mark.asyncio
     async def test_edge_case_5_1_existing_standalone_team(self, mock_prisma_client):
         """
-        Edge Case 5.1: Existing standalone team should NOT be updated.
+        Edge Case: Existing standalone team should NOT be updated.
         """
         from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
 
@@ -1510,7 +1510,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_edge_case_5_2_org_creation_fails(self, sample_entra_group):
         """
-        Edge Case 5.2: Org creation fails - team should still be created as standalone.
+        Edge Case: Org creation fails - team should still be created as standalone.
         """
         from litellm.proxy.management_endpoints.ui_sso import (
             MicrosoftSSOHandler,
@@ -1541,7 +1541,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_edge_case_5_3_no_default_team_params(self, mock_prisma_client):
         """
-        Edge Case 5.3: No default_team_params - org created with no limits.
+        Edge Case No default_team_params - org created with no limits.
         """
         from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
 
@@ -1570,7 +1570,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_edge_case_5_4_user_already_in_org(self, mock_prisma_client):
         """
-        Edge Case 5.4: User already in org - skip duplicate.
+        Edge Case: User already in org - skip duplicate.
         """
         from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
 
@@ -1595,7 +1595,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_edge_case_5_5_team_already_org_scoped(self, mock_prisma_client):
         """
-        Edge Case 5.5: Team already org-scoped - no update.
+        Edge Case: Team already org-scoped - no update.
         """
         from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
 
@@ -1629,7 +1629,7 @@ class TestEdgeCases:
         mock_prisma_client,
     ):
         """
-        Edge Case 5.8: Empty Entra group - org/team still created.
+        Edge Case: Empty Entra group - org/team still created.
         """
         from litellm.proxy.management_endpoints.ui_sso import (
             MicrosoftSSOHandler,
@@ -1665,7 +1665,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_edge_case_5_10_prisma_unavailable_logs_error(self):
         """
-        Edge Case 5.10: Prisma unavailable - logs and raises error for org.
+        Edge Case: Prisma unavailable - logs and raises error for org.
         """
         from litellm.proxy.management_endpoints.ui_sso import SSOAuthenticationHandler
         from litellm.proxy._types import ProxyException
