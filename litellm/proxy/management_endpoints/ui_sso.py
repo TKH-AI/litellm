@@ -32,6 +32,7 @@ from litellm.llms.custom_httpx.http_handler import (
 )
 from litellm.proxy._types import (
     CommonProxyErrors,
+    LiteLLM_OrganizationTable,
     LiteLLM_UserTable,
     LitellmUserRoles,
     Member,
@@ -1617,6 +1618,23 @@ class SSOAuthenticationHandler:
             _new_team_request.update(_default_team_params)
             team_request = NewTeamRequest(**_new_team_request)
         return team_request
+
+    @staticmethod
+    async def create_litellm_org_from_sso_group(
+        litellm_org_id: str,
+        litellm_org_name: Optional[str] = None,
+    ) -> Optional[LiteLLM_OrganizationTable]:
+        """Creates Organization from SSO Group. Implemented in Task 2-B."""
+        raise NotImplementedError("Task 2-B")
+
+    @staticmethod
+    async def add_user_to_org_membership(
+        user_id: str,
+        organization_id: str,
+        user_role: str = "internal_user",
+    ) -> None:
+        """Adds user to org membership. Implemented in Task 2-D."""
+        raise NotImplementedError("Task 2-D")
 
     @staticmethod
     def _get_cli_state(
