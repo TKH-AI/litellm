@@ -1,3 +1,4 @@
+
 import asyncio
 import json
 import os
@@ -2165,6 +2166,7 @@ async def test_new_team_org_scoped_budget_bypasses_user_limit():
         team_alias="org-scoped-team",
         max_budget=50.0,  # Within org's $100 limit, but exceeds user's $3 limit
         organization_id="test-org-123",  # This makes it an org-scoped team
+        models=["all-org-models"],  # Required for org-scoped teams
     )
 
     dummy_request = MagicMock(spec=Request)
@@ -3487,6 +3489,7 @@ async def test_new_team_org_scoped_tpm_rpm_bypasses_user_limit():
         organization_id="test-org-bypass",
         tpm_limit=10000,  # Exceeds user's 1000 but within org's 50000
         rpm_limit=1000,   # Exceeds user's 100 but within org's 5000
+        models=["all-org-models"],  # Required for org-scoped teams
     )
 
     dummy_request = MagicMock(spec=Request)
@@ -3958,3 +3961,453 @@ async def test_update_team_guardrails_with_org_id():
             assert "include" in first_call_kwargs
             assert "teams" in first_call_kwargs["include"]
             assert first_call_kwargs["include"]["teams"] is True
+
+
+@pytest.mark.asyncio
+async def test_new_team_org_scoped_empty_models_rejected():
+    """
+    Test that /team/new REJECTS empty model list when organization has restricted models.
+    """
+    from fastapi import Request
+    from litellm.proxy._types import NewTeamRequest, UserAPIKeyAuth, LiteLLM_OrganizationTable, ProxyException
+    from litellm.proxy.management_endpoints.team_endpoints import new_team
+
+    # Create user (org admin)
+    org_admin_user = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        user_id="org-admin-empty-models",
+        models=[],
+    )
+
+    # Create team request with EMPTY models list
+    team_request = NewTeamRequest(
+        team_alias="org-team-empty-models",
+        models=[],  # Empty list should be rejected
+        organization_id="test-org-restricted-models",
+    )
+
+    dummy_request = MagicMock(spec=Request)
+
+    # Mock organization with restricted models
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-restricted-models"
+    mock_org.models = ["gpt-4", "gpt-3.5-turbo"]
+    mock_org.litellm_budget_table = None
+
+    with patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma, \
+         patch("litellm.proxy.proxy_server.user_api_key_cache") as mock_cache, \
+         patch("litellm.proxy.proxy_server._license_check") as mock_license, \
+         patch("litellm.proxy.proxy_server.litellm_proxy_admin_name", "admin"), \
+         patch("litellm.proxy.proxy_server.create_audit_log_for_update", new=AsyncMock()), \
+         patch("litellm.proxy.management_endpoints.team_endpoints.get_org_object") as mock_get_org:
+
+        # Mock basic checks
+        mock_prisma.db.litellm_teamtable.count = AsyncMock(return_value=0)
+        mock_license.is_team_count_over_limit.return_value = False
+        mock_prisma.get_data = AsyncMock(return_value=None)
+        mock_get_org.return_value = mock_org
+
+        # Should raise ProxyException
+        with pytest.raises(ProxyException) as exc_info:
+            await new_team(
+                data=team_request,
+                http_request=dummy_request,
+                user_api_key_dict=org_admin_user,
+            )
+
+        assert exc_info.value.code == '400'
+        assert "must specify a model list" in str(exc_info.value.message)
+
+
+@pytest.mark.asyncio
+async def test_update_team_org_scoped_empty_models_rejected():
+    """
+    Test that /team/update REJECTS explicit empty list but ALLOWS None (no change).
+    """
+    from fastapi import Request
+    from litellm.proxy._types import UpdateTeamRequest, UserAPIKeyAuth, LiteLLM_OrganizationTable, ProxyException
+    from litellm.proxy.management_endpoints.team_endpoints import update_team
+
+    org_admin_user = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        user_id="org-admin-update-empty",
+        models=[],
+    )
+
+    dummy_request = MagicMock(spec=Request)
+
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-update"
+    mock_org.models = ["gpt-4"]
+    mock_org.litellm_budget_table = None
+
+    with patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma, \
+         patch("litellm.proxy.proxy_server.user_api_key_cache") as mock_cache, \
+         patch("litellm.proxy.proxy_server.proxy_logging_obj") as mock_logging, \
+         patch("litellm.proxy.proxy_server.litellm_proxy_admin_name", "admin"), \
+         patch("litellm.proxy.proxy_server.create_audit_log_for_update", new=AsyncMock()), \
+         patch("litellm.proxy.management_endpoints.team_endpoints.get_org_object") as mock_get_org:
+
+        # Mock existing org-scoped team
+        mock_existing_team = MagicMock()
+        mock_existing_team.team_id = "org-team-123"
+        mock_existing_team.organization_id = "test-org-update"
+        mock_existing_team.models = ["gpt-4"]
+        mock_existing_team.model_dump.return_value = {
+            "team_id": "org-team-123",
+            "organization_id": "test-org-update",
+            "models": ["gpt-4"]
+        }
+        mock_prisma.db.litellm_teamtable.find_unique = AsyncMock(return_value=mock_existing_team)
+        mock_get_org.return_value = mock_org
+
+        # 1. Test rejecting explicit empty list
+        update_request_empty = UpdateTeamRequest(
+            team_id="org-team-123",
+            models=[],  # Explicit empty list -> REJECT
+        )
+
+        with pytest.raises(ProxyException) as exc_info:
+            await update_team(
+                data=update_request_empty,
+                http_request=dummy_request,
+                user_api_key_dict=org_admin_user,
+            )
+        assert exc_info.value.code == '400'
+        assert "Cannot set empty model list" in str(exc_info.value.message)
+
+        # 2. Test allowing None (no change) - requires mocking update success
+        update_request_none = UpdateTeamRequest(
+            team_id="org-team-123",
+            models=None,  # No change -> ALLOW
+            team_alias="new-alias"
+        )
+
+        mock_updated_team = MagicMock()
+        mock_updated_team.team_id = "org-team-123"
+        mock_updated_team.model_dump.return_value = {"team_id": "org-team-123"}
+        mock_prisma.db.litellm_teamtable.update = AsyncMock(return_value=mock_updated_team)
+        mock_prisma.jsonify_team_object = lambda db_data: db_data
+        mock_cache.async_set_cache = AsyncMock()
+
+        # Should not raise
+        await update_team(
+            data=update_request_none,
+            http_request=dummy_request,
+            user_api_key_dict=org_admin_user,
+        )
+
+
+@pytest.mark.asyncio
+async def test_new_team_org_scoped_all_proxy_models_rejected():
+    """
+    Test that 'all-proxy-models' is REJECTED for org-scoped teams.
+    """
+    from fastapi import Request
+    from litellm.proxy._types import NewTeamRequest, UserAPIKeyAuth, LiteLLM_OrganizationTable, SpecialModelNames
+    from litellm.proxy.management_endpoints.team_endpoints import new_team
+
+    org_admin_user = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        user_id="org-admin-all-proxy",
+        models=[],
+    )
+
+    team_request = NewTeamRequest(
+        team_alias="org-team-all-proxy",
+        models=[SpecialModelNames.all_proxy_models.value],  # Should be rejected
+        organization_id="test-org-restricted",
+    )
+
+    dummy_request = MagicMock(spec=Request)
+
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-restricted"
+    mock_org.models = ["gpt-4"]
+    mock_org.litellm_budget_table = None
+
+    with patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma, \
+         patch("litellm.proxy.proxy_server.user_api_key_cache") as mock_cache, \
+         patch("litellm.proxy.proxy_server._license_check") as mock_license, \
+         patch("litellm.proxy.proxy_server.litellm_proxy_admin_name", "admin"), \
+         patch("litellm.proxy.proxy_server.create_audit_log_for_update", new=AsyncMock()), \
+         patch("litellm.proxy.management_endpoints.team_endpoints.get_org_object") as mock_get_org:
+
+        mock_prisma.db.litellm_teamtable.count = AsyncMock(return_value=0)
+        mock_license.is_team_count_over_limit.return_value = False
+        mock_prisma.get_data = AsyncMock(return_value=None)
+        mock_get_org.return_value = mock_org
+
+        with pytest.raises(ProxyException) as exc_info:
+            await new_team(
+                data=team_request,
+                http_request=dummy_request,
+                user_api_key_dict=org_admin_user,
+            )
+
+        assert exc_info.value.code == '400'
+        assert "cannot use 'all-proxy-models'" in str(exc_info.value.message).lower()
+
+
+@pytest.mark.asyncio
+async def test_new_team_org_scoped_all_org_models_allowed():
+    """
+    Test that 'all-org-models' is ALLOWED and works correctly.
+    """
+    from fastapi import Request
+    from litellm.proxy._types import NewTeamRequest, UserAPIKeyAuth, LiteLLM_OrganizationTable
+    from litellm.proxy.management_endpoints.team_endpoints import new_team
+
+    org_admin_user = UserAPIKeyAuth(
+        user_role=LitellmUserRoles.INTERNAL_USER,
+        user_id="org-admin-all-org",
+        models=[],
+    )
+
+    team_request = NewTeamRequest(
+        team_alias="org-team-all-org",
+        models=["all-org-models"],  # Should be allowed
+        organization_id="test-org-restricted",
+    )
+
+    dummy_request = MagicMock(spec=Request)
+
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-restricted"
+    mock_org.models = ["gpt-4", "claude-3"]
+    mock_org.litellm_budget_table = None
+
+    with patch("litellm.proxy.proxy_server.prisma_client") as mock_prisma, \
+         patch("litellm.proxy.proxy_server.user_api_key_cache") as mock_cache, \
+         patch("litellm.proxy.proxy_server._license_check") as mock_license, \
+         patch("litellm.proxy.proxy_server.proxy_logging_obj") as mock_proxy_logging, \
+         patch("litellm.proxy.proxy_server.litellm_proxy_admin_name", "admin"), \
+         patch("litellm.proxy.proxy_server.create_audit_log_for_update", new=AsyncMock()), \
+         patch("litellm.proxy.management_endpoints.team_endpoints.get_org_object") as mock_get_org, \
+         patch("litellm.proxy.management_endpoints.team_endpoints._add_team_members_to_team", new=AsyncMock()):
+
+        mock_prisma.db.litellm_teamtable.count = AsyncMock(return_value=0)
+        mock_license.is_team_count_over_limit.return_value = False
+        mock_prisma.get_data = AsyncMock(return_value=None)
+        mock_prisma.update_data = AsyncMock()
+        mock_get_org.return_value = mock_org
+
+        # Mock successful creation
+        mock_created_team = MagicMock()
+        mock_created_team.team_id = "new-team-id"
+        mock_created_team.models = ["all-org-models"]
+        mock_created_team.model_dump.return_value = {
+            "team_id": "new-team-id",
+            "models": ["all-org-models"]
+        }
+        mock_prisma.db.litellm_teamtable.create = AsyncMock(return_value=mock_created_team)
+        mock_prisma.db.litellm_teamtable.update = AsyncMock(return_value=mock_created_team)
+        mock_prisma.jsonify_team_object = lambda db_data: db_data
+
+        result = await new_team(
+            data=team_request,
+            http_request=dummy_request,
+            user_api_key_dict=org_admin_user,
+        )
+
+        assert result["models"] == ["all-org-models"]
+
+
+@pytest.mark.asyncio
+async def test_new_team_org_scoped_unspecified_models_rejected():
+    """
+    Test that creating a team without specifying models under an organization
+    is rejected (models defaults to empty list).
+    """
+    from fastapi import Request
+    from litellm.proxy._types import NewTeamRequest, UserAPIKeyAuth, LiteLLM_OrganizationTable
+    from litellm.proxy.management_endpoints.team_endpoints import _check_org_team_limits
+
+    # Create team request WITHOUT specifying models (defaults to [])
+    team_request = NewTeamRequest(
+        team_alias="unspecified-models-team",
+        # models not specified - defaults to [] which should be rejected
+        organization_id="test-org-with-restricted-models",
+    )
+
+    # Mock organization with RESTRICTED models
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-with-restricted-models"
+    mock_org.models = ["claude-3-opus", "claude-3-sonnet"]
+    mock_org.litellm_budget_table = MagicMock()
+    mock_org.litellm_budget_table.max_budget = None
+    mock_org.litellm_budget_table.tpm_limit = None
+    mock_org.litellm_budget_table.rpm_limit = None
+
+    mock_prisma = MagicMock()
+
+    # Should raise HTTPException - unspecified models not allowed for org-scoped teams
+    with pytest.raises(HTTPException) as exc_info:
+        await _check_org_team_limits(
+            org_table=mock_org,
+            data=team_request,
+            prisma_client=mock_prisma,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "must specify a model list" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_update_team_org_scoped_models_none_succeeds():
+    """
+    Test that UpdateTeamRequest with models=None (partial update) succeeds.
+
+    Scenario:
+    - Client calls /team/update to update budget only (not specifying models)
+    - models defaults to None, meaning "don't change"
+    - Should succeed without requiring models to be re-specified
+    """
+    from litellm.proxy._types import UpdateTeamRequest, LiteLLM_OrganizationTable
+    from litellm.proxy.management_endpoints.team_endpoints import _check_org_team_limits
+
+    # Create update request with models=None (don't change models)
+    update_request = UpdateTeamRequest(
+        team_id="org-team-partial-update-123",
+        max_budget=1000.0,  # Only updating budget
+        # models is NOT specified, so it defaults to None
+    )
+
+    # Verify models is None (not empty list)
+    assert update_request.models is None, "models should be None by default for UpdateTeamRequest"
+
+    # Mock organization with models
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-partial-update"
+    mock_org.models = ["gpt-4", "gpt-3.5-turbo"]
+    mock_org.litellm_budget_table = MagicMock()
+    mock_org.litellm_budget_table.max_budget = 5000.0
+    mock_org.litellm_budget_table.tpm_limit = None
+    mock_org.litellm_budget_table.rpm_limit = None
+
+    mock_prisma = MagicMock()
+
+    # Should NOT raise HTTPException - models=None means "don't change"
+    await _check_org_team_limits(
+        org_table=mock_org,
+        data=update_request,
+        prisma_client=mock_prisma,
+    )
+    # If we get here, the test passed (no exception raised)
+
+
+def test_get_team_models_all_org_models_resolution():
+    """
+    Test that get_team_models correctly resolves 'all-org-models' to organization's models.
+
+    This tests the runtime resolution of 'all-org-models' when organization_models is provided.
+    """
+    from litellm.proxy.auth.model_checks import get_team_models
+
+    team_models = ["all-org-models"]
+    proxy_model_list = ["gpt-4", "gpt-3.5-turbo", "claude-3-opus", "gemini-pro"]
+    model_access_groups = {}
+    organization_models = ["gpt-4", "gpt-3.5-turbo"]  # Org's allowed models
+
+    result = get_team_models(
+        team_models=team_models,
+        proxy_model_list=proxy_model_list,
+        model_access_groups=model_access_groups,
+        organization_models=organization_models,
+    )
+
+    # Should return the organization's models, not all proxy models
+    assert set(result) == set(organization_models), f"Expected {organization_models}, got {result}"
+    # Should NOT include models outside the org's list
+    assert "claude-3-opus" not in result
+    assert "gemini-pro" not in result
+
+
+def test_get_team_models_all_org_models_without_org_models():
+    """
+    Test that get_team_models handles 'all-org-models' when organization_models is None/empty.
+
+    This tests the edge case where a team has 'all-org-models' but no org models are provided.
+    """
+    from litellm.proxy.auth.model_checks import get_team_models
+
+    team_models = ["all-org-models"]
+    proxy_model_list = ["gpt-4", "gpt-3.5-turbo"]
+    model_access_groups = {}
+
+    # Test with None
+    result = get_team_models(
+        team_models=team_models,
+        proxy_model_list=proxy_model_list,
+        model_access_groups=model_access_groups,
+        organization_models=None,
+    )
+
+    # Should return empty list when no org models provided
+    assert result == [], f"Expected empty list when org_models is None, got {result}"
+
+    # Test with empty list
+    result = get_team_models(
+        team_models=team_models,
+        proxy_model_list=proxy_model_list,
+        model_access_groups=model_access_groups,
+        organization_models=[],
+    )
+
+    assert result == [], f"Expected empty list when org_models is empty, got {result}"
+
+
+@pytest.mark.asyncio
+async def test_new_team_org_no_model_restrictions():
+    """
+    Test team creation under an organization with NO model restrictions (models: []).
+
+    Validates:
+    1. Empty models list is REJECTED (must be explicit about intent)
+    2. 'all-proxy-models' is REJECTED (org teams must use 'all-org-models')
+    3. 'all-org-models' is ALLOWED (proper way to inherit from unrestricted org)
+    4. Explicit models are ALLOWED (no validation since org has no restrictions)
+    """
+    from litellm.proxy._types import NewTeamRequest, LiteLLM_OrganizationTable, SpecialModelNames
+    from litellm.proxy.management_endpoints.team_endpoints import _check_org_team_limits
+
+    # Mock organization with NO model restrictions
+    mock_org = MagicMock(spec=LiteLLM_OrganizationTable)
+    mock_org.organization_id = "test-org-no-restrictions"
+    mock_org.models = []  # No restrictions
+    mock_org.litellm_budget_table = None
+    mock_prisma = MagicMock()
+
+    # 1. Empty models → REJECTED
+    with pytest.raises(HTTPException) as exc_info:
+        await _check_org_team_limits(
+            org_table=mock_org,
+            data=NewTeamRequest(team_alias="t1", models=[], organization_id="org"),
+            prisma_client=mock_prisma,
+        )
+    assert exc_info.value.status_code == 400
+    assert "must specify a model list" in str(exc_info.value.detail)
+
+    # 2. 'all-proxy-models' → REJECTED
+    with pytest.raises(HTTPException) as exc_info:
+        await _check_org_team_limits(
+            org_table=mock_org,
+            data=NewTeamRequest(team_alias="t2", models=[SpecialModelNames.all_proxy_models.value], organization_id="org"),
+            prisma_client=mock_prisma,
+        )
+    assert exc_info.value.status_code == 400
+    assert "all-proxy-models" in str(exc_info.value.detail).lower()
+
+    # 3. 'all-org-models' → ALLOWED
+    await _check_org_team_limits(
+        org_table=mock_org,
+        data=NewTeamRequest(team_alias="t3", models=["all-org-models"], organization_id="org"),
+        prisma_client=mock_prisma,
+    )
+
+    # 4. Explicit models → ALLOWED (no validation when org has no restrictions)
+    await _check_org_team_limits(
+        org_table=mock_org,
+        data=NewTeamRequest(team_alias="t4", models=["gpt-4", "claude-3"], organization_id="org"),
+        prisma_client=mock_prisma,
+    )
