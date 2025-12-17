@@ -79,6 +79,10 @@ const CreateTeamModal = ({
   const [mcpAccessGroups, setMcpAccessGroups] = useState<string[]>([]);
   const [mcpAccessGroupsLoaded, setMcpAccessGroupsLoaded] = useState(false);
 
+  // The effective organization for the create team form
+  // Either the user-selected organization (from dropdown) or the pre-populated organization (for org admins)
+  const effectiveOrg = currentOrgForCreateTeam ?? currentOrg;
+
   useEffect(() => {
     const fetchUserModels = async () => {
       try {
@@ -98,12 +102,12 @@ const CreateTeamModal = ({
   }, [accessToken, userID, userRole, teams]);
 
   useEffect(() => {
-    console.log(`currentOrgForCreateTeam: ${currentOrgForCreateTeam}`);
-    const models = getOrganizationModels(currentOrgForCreateTeam, userModels);
+    console.log(`effectiveOrg: ${effectiveOrg}`);
+    const models = getOrganizationModels(effectiveOrg, userModels);
     console.log(`models: ${models}`);
     setModelsToPick(models);
     form.setFieldValue("models", []);
-  }, [currentOrgForCreateTeam, userModels, form]);
+  }, [effectiveOrg, userModels, form]);
 
   const fetchMcpAccessGroups = async () => {
     try {
@@ -342,7 +346,7 @@ const CreateTeamModal = ({
             label={
               <span>
                 Models{" "}
-                <Tooltip title={currentOrgForCreateTeam
+                <Tooltip title={effectiveOrg
                   ? "Teams under an organization must have models selected. Choose 'All Organization Models' to inherit the organization's model restrictions."
                   : "These are the models that your selected team has access to"
                 }>
@@ -354,7 +358,7 @@ const CreateTeamModal = ({
             rules={[
               {
                 validator: (_, value) => {
-                  if (currentOrgForCreateTeam && (!value || value.length === 0)) {
+                  if (effectiveOrg && (!value || value.length === 0)) {
                     return Promise.reject(new Error("Teams under an organization must have at least one model selected. Use 'All Organization Models' to inherit organization's models."));
                   }
                   return Promise.resolve();
@@ -364,7 +368,7 @@ const CreateTeamModal = ({
           >
             <Select2
               mode="multiple"
-              placeholder={currentOrgForCreateTeam ? "Select models (required for org teams)" : "Select models"}
+              placeholder={effectiveOrg ? "Select models (required for org teams)" : "Select models"}
               style={{ width: "100%" }}
               onChange={(values) => {
                 // When "all-org-models" is selected, make it exclusive
@@ -377,7 +381,7 @@ const CreateTeamModal = ({
                 }
               }}
             >
-              {currentOrgForCreateTeam ? (
+              {effectiveOrg ? (
                 <Select2.Option key="all-org-models" value="all-org-models">
                   All Organization Models
                 </Select2.Option>
