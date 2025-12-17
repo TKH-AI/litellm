@@ -4131,6 +4131,7 @@ async def get_available_models_for_user(
 
     # Get team models
     team_models: List[str] = user_api_key_dict.team_models
+    organization_models: Optional[List[str]] = user_api_key_dict.organization_models
 
     # If specific team_id is provided, validate and get team models
     if team_id and prisma_client and proxy_logging_obj and user_api_key_cache:
@@ -4144,12 +4145,25 @@ async def get_available_models_for_user(
         validate_membership(user_api_key_dict=user_api_key_dict, team_table=team_object)
         team_models = team_object.models
 
+        # If team belongs to an organization, fetch that org's models for resolution
+        if team_object.organization_id:
+            from litellm.proxy.auth.auth_checks import get_org_object
+
+            org_object = await get_org_object(
+                org_id=team_object.organization_id,
+                prisma_client=prisma_client,
+                user_api_key_cache=user_api_key_cache,
+                proxy_logging_obj=proxy_logging_obj,
+            )
+            if org_object:
+                organization_models = org_object.models
+
     team_models = get_team_models(
         team_models=team_models,
         proxy_model_list=proxy_model_list,
         model_access_groups=model_access_groups,
         include_model_access_groups=include_model_access_groups,
-        organization_models=user_api_key_dict.organization_models,
+        organization_models=organization_models,
     )
 
     # Get complete model list

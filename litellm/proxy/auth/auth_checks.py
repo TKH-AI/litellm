@@ -120,6 +120,7 @@ async def common_checks(
             team_object=team_object,
             llm_router=llm_router,
             team_model_aliases=valid_token.team_model_aliases if valid_token else None,
+            organization_models=valid_token.organization_models if valid_token else None,
         ):
             raise ProxyException(
                 message=f"Team not allowed to access model. Team={team_object.team_id}, Model={_model}. Allowed team models = {team_object.models}",
@@ -1636,6 +1637,7 @@ def _check_model_access_helper(
     models: List[str],
     team_model_aliases: Optional[Dict[str, str]] = None,
     team_id: Optional[str] = None,
+    organization_models: Optional[List[str]] = None,
 ) -> bool:
     ## check if model in allowed model names
     from collections import defaultdict
@@ -1675,6 +1677,17 @@ def _check_model_access_helper(
     if SpecialModelNames.all_proxy_models.value in filtered_models:
         all_model_access = True
 
+    # Handle all-org-models: resolve to organization's allowed models
+    if SpecialModelNames.all_org_models.value in filtered_models:
+        if organization_models is not None:
+            if len(organization_models) == 0:
+                # Org has no model restrictions - allow all models
+                all_model_access = True
+            elif model in organization_models:
+                # Model is in org's allowed list
+                return True
+        # If organization_models is None, we don't have org context - fall through to fail
+
     if model is not None and model not in filtered_models and all_model_access is False:
         return False
     return True
@@ -1688,6 +1701,7 @@ def _can_object_call_model(
     team_id: Optional[str] = None,
     object_type: Literal["user", "team", "key", "org"] = "user",
     fallback_depth: int = 0,
+    organization_models: Optional[List[str]] = None,
 ) -> Literal[True]:
     """
     Checks if token can call a given model
@@ -1698,6 +1712,7 @@ def _can_object_call_model(
         - models: List[str]
         - team_model_aliases: Optional[Dict[str, str]]
         - object_type: Literal["user", "team", "key", "org"]. We use the object type to raise the correct exception type
+        - organization_models: Optional[List[str]] - The organization's allowed models, used to resolve 'all-org-models'
 
     Returns:
         - True: if token allowed to call model
@@ -1721,6 +1736,7 @@ def _can_object_call_model(
                 team_id=team_id,
                 object_type=object_type,
                 fallback_depth=fallback_depth + 1,
+                organization_models=organization_models,
             )
         return True
 
@@ -1740,6 +1756,7 @@ def _can_object_call_model(
             models=models,
             team_model_aliases=team_model_aliases,
             team_id=team_id,
+            organization_models=organization_models,
         ):
             return True
 
@@ -1795,6 +1812,7 @@ async def can_key_call_model(
         team_model_aliases=valid_token.team_model_aliases,
         team_id=valid_token.team_id,
         object_type="key",
+        organization_models=valid_token.organization_models,
     )
 
 
@@ -1822,10 +1840,13 @@ def can_team_access_model(
     team_object: Optional[LiteLLM_TeamTable],
     llm_router: Optional[Router],
     team_model_aliases: Optional[Dict[str, str]] = None,
+    organization_models: Optional[List[str]] = None,
 ) -> Literal[True]:
     """
     Returns True if the team can access a specific model.
 
+    Args:
+        organization_models: The organization's allowed models, used to resolve 'all-org-models'
     """
     return _can_object_call_model(
         model=model,
@@ -1834,6 +1855,7 @@ def can_team_access_model(
         team_model_aliases=team_model_aliases,
         team_id=team_object.team_id if team_object else None,
         object_type="team",
+        organization_models=organization_models,
     )
 
 

@@ -164,6 +164,11 @@ const Teams: React.FC<TeamProps> = ({
   const [lastRefreshed, setLastRefreshed] = useState("");
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [currentOrgForCreateTeam, setCurrentOrgForCreateTeam] = useState<Organization | null>(null);
+
+  // The effective organization for the create team form
+  // Either the user-selected organization (from dropdown) or the pre-populated organization (for org admins)
+  const effectiveOrg = currentOrgForCreateTeam ?? currentOrg;
+
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<FilterState>({
     team_id: "",
@@ -210,12 +215,12 @@ const Teams: React.FC<TeamProps> = ({
   const [modelAliases, setModelAliases] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
-    console.log(`currentOrgForCreateTeam: ${currentOrgForCreateTeam}`);
-    const models = getOrganizationModels(currentOrgForCreateTeam, userModels);
+    console.log(`effectiveOrg: ${effectiveOrg}`);
+    const models = getOrganizationModels(effectiveOrg, userModels);
     console.log(`models: ${models}`);
     setModelsToPick(models);
     form.setFieldValue("models", []);
-  }, [currentOrgForCreateTeam, userModels]);
+  }, [effectiveOrg, userModels]);
 
   // Handle organization preselection when modal opens
   useEffect(() => {
@@ -1144,23 +1149,65 @@ const Teams: React.FC<TeamProps> = ({
                     label={
                       <span>
                         Models{" "}
-                        <Tooltip title="These are the models that your selected team has access to">
+                        <Tooltip
+                          title={
+                            effectiveOrg
+                              ? "Teams under an organization must have models selected. Choose 'All Organization Models' to inherit the organization's model restrictions."
+                              : "These are the models that your selected team has access to"
+                          }
+                        >
                           <InfoCircleOutlined style={{ marginLeft: "4px" }} />
                         </Tooltip>
                       </span>
                     }
                     rules={[
                       {
-                        required: true,
-                        message: "Please select at least one model",
+                        validator: (_, value) => {
+                          if (effectiveOrg && (!value || value.length === 0)) {
+                            return Promise.reject(
+                              new Error(
+                                "Teams under an organization must have at least one model selected. Use 'All Organization Models' to inherit organization's models."
+                              )
+                            );
+                          }
+                          if (!value || value.length === 0) {
+                            return Promise.reject(new Error("Please select at least one model"));
+                          }
+                          return Promise.resolve();
+                        },
                       },
                     ]}
                     name="models"
                   >
-                    <Select2 mode="multiple" placeholder="Select models" style={{ width: "100%" }}>
-                      <Select2.Option key="no-default-models" value="no-default-models">
-                        No Default Models
-                      </Select2.Option>
+                    <Select2
+                      mode="multiple"
+                      placeholder={effectiveOrg ? "Select models (required for org teams)" : "Select models"}
+                      style={{ width: "100%" }}
+                      onChange={(values) => {
+                        // When "all-org-models" is selected, make it exclusive
+                        if (values.includes("all-org-models")) {
+                          form.setFieldsValue({ models: ["all-org-models"] });
+                        }
+                        // When "all-proxy-models" is selected, make it exclusive
+                        else if (values.includes("all-proxy-models")) {
+                          form.setFieldsValue({ models: ["all-proxy-models"] });
+                        }
+                      }}
+                    >
+                      {effectiveOrg ? (
+                        <Select2.Option key="all-org-models" value="all-org-models">
+                          All Organization Models
+                        </Select2.Option>
+                      ) : (
+                        <>
+                          <Select2.Option key="all-proxy-models" value="all-proxy-models">
+                            All Proxy Models
+                          </Select2.Option>
+                          <Select2.Option key="no-default-models" value="no-default-models">
+                            No Default Models
+                          </Select2.Option>
+                        </>
+                      )}
                       {modelsToPick.map((model) => (
                         <Select2.Option key={model} value={model}>
                           {getModelDisplayName(model)}
